@@ -14,6 +14,9 @@ u64 len = size / sizeof(u64);
 for (u64 i = 0; i < len; i++) {
     *(mem + i) = v;
 }
+if (mem[1] == 0xdeadbeef) { // Force compiler to perform write..
+   exit(1);
+}
 ```
 
 
