@@ -1,46 +1,72 @@
 memspeed
---------
+========
+Simple C/ASM based memory bandwidth benchmark.
 
-Simple C based memory bandwidth benchmark.
-
-Basically doing this C call to page aligned heap (or shared mmap if you define USE_MMAP)...
+This test essentially boils down to various implementations of this loop...
 ```c
-const u64 b = iter % 0xff;
-u64 v = 0;
-for (int i = 0; i < sizeof(u64); i++) {
-    v = (v << 8) | b;
-}
-u64 len = size / sizeof(u64);
-for (u64 i = 0; i < len; i++) {
-    *(mem + i) = v;
-}
-if (mem[1] == 0xdeadbeef) { // Force compiler to perform write..
-   exit(1);
+u64 *mem = malloc(size);
+for (u64 i = 0; i < size / sizeof(u64); i++) {
+    mem[i] = <non_zero_value>;
 }
 ```
 
+Care is taken to prevent compilers (gcc, clang) from optimizing out the loop.  The data written
+to memory is altered between iterations but is not verified, i.e. write-only.  Some of the tests
+use "non-temporal" strategies, sometimes called streaming or out of order writes which can be
+faster on lower end CPUs and/or with higher buffer sizes that exceed CPU caches.  If you're
+interested in exploring your cache sizes, play with the buffer size and observe the jumps in speed.
+
+
+Compatibility
+--------
+x86 (64bit) Linux
+ARM macOS
+
 
 Building
-========
+--------
 ```shell
 make
 ```
 
-Produces `memspeed` exec
+Produces `memspeed` executable in the project root.
+
+
+Usage
+--------
+Options will vary between Linux and macOS.
+
+Example Linux output...
+```shell
+:; ./memspeed --help
+Usage: ./memspeed [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] BUFFER_SIZE_MB
+    STRATEGY:
+        c_loop          : A standard C loop subject to compiler optimizations
+        c_loop_unrolled : A standard C loop with 16 x 64bit writes unrolled
+        memset          : Byte by byte memset(2) in a loop
+        memcpy          : 8 byte stride memcpy from stack buffer
+        x86asm          : Non-termporal 64bit x86 ASM loop
+        x86asm_unrolled : Non-termporal 64bit x86 ASM, 8 chunks unrolled
+        avx2            : AVX2 intrinsics (C based)
+    TRANSFER_SIZE_GB:     Total amount to transfer through memory in GB
+```
 
 
 Running
-========
+--------
 ```shell
-$ ./memspeed 
+:; ./memspeed --transfer 113 99
+make: Nothing to be done for 'default'.
+Strategy: c_loop
 Page size: 4096
-Allocating memory: 8.0GB
+Target transfer size: 113GB
+Allocating memory: 99MB
 Using MALLOC
-Clearing memory...
+Pre-faulting memory...
 Running test...
-............
-DONE
-Transferred: 96.00GB
-Time: 3.790s
-Speed: 25.33GB/s
+.................................................................................................................
+COMPLETED
+Transferred: 112.92GB
+Time: 3.707s
+Speed: 30.46GB/s
 ```

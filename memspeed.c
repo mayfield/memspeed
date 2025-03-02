@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/param.h>
 #include <sys/mman.h>
 #ifndef __APPLE__
@@ -13,9 +14,15 @@
 # include <arm_neon.h>
 #endif
 
+#define GB (1l * 1024 * 1024 * 1024)
+#define MB (1l * 1024 * 1024)
+
 static size_t page_size = 0;
 struct timespec _ts;
 typedef void (*mem_write_test)(void *ptr, size_t size, uint64_t iter);
+
+static double start_time = 0;
+static size_t transferred = 0;
 
 
 static double get_time() {
@@ -45,8 +52,8 @@ static uint64_t str_to_pos_u64(char* raw) {
 static void * restrict alloc(size_t size, int use_mmap) {
     void *ptr;
     if (use_mmap != 0) {
-        printf("Using MMAP\n");
-        ptr = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+        printf("Using MMAP (SHARED)\n");
+        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
         if (ptr == MAP_FAILED) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
             exit(1);
@@ -228,43 +235,67 @@ static void mem_write_test_memcpy(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static size_t bench(void *mem, size_t size, mem_write_test test) {
-    if (size == 0) {
-        return 0;
-    }
-    const size_t target_size = 100l * 1024 * 1024 * 1024;
-    const size_t max_iter = target_size / size;
+static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
+    const size_t iterations = transfer_size / buffer_size;
     uint64_t iter;
-    for (iter = 1; iter <= max_iter; iter++) {
-        test(mem, size, iter);
+    transferred = 0;
+    int gb_dot = 0;
+    for (iter = 1; iter <= iterations; iter++) {
+        test(mem, buffer_size, iter);
         if (((uint32_t*) mem)[1] == 0xdeadbeef) { // Force compiler to perform write..
             printf("Memory Error!\n");
-            return 0;
+            exit(1);
         }
-        printf(".");
-        fflush(stdout);
+        transferred += buffer_size;
+        // Print one dot for every GB...
+        for (; gb_dot * GB < transferred; gb_dot++) {
+            printf(".");
+            fflush(stdout);
+        }
     }
-    return (iter - 1) * size;
+}
+
+
+static void print_results(double time) {
+    double transferred_gb = (double) transferred / GB;
+    printf("Transferred: %.2fGB\n", transferred_gb);
+    printf("Time: %.3fs\n", time);
+    printf("Speed: %.2fGB/s\n", transferred_gb / time);
+}
+
+
+static void on_interrupted(int _) {
+    double end_time = get_time();
+    printf("\nINTERRUPTED\n");
+    print_results(end_time - start_time);
+    exit(1);
 }
 
 
 int main(int argc, char *argv[]) {
     page_size = sysconf(_SC_PAGESIZE);
-    size_t size_mb = 8 * 1024;
-    char *strat = "c_loop";
+    size_t buffer_size_mb = 4 * 1024;
+    size_t transfer_size_gb = 100;
+    char *strategy = "c_loop";
     int use_mmap = 0;
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--strat") == 0) {
+        if (strcmp(argv[i], "--strategy") == 0) {
             if (argc < i + 2) {
-                fprintf(stderr, "Expected strat argument\n");
+                fprintf(stderr, "Expected STRATEGY argument\n");
                 exit(1);
             }
-            strat = argv[++i];
+            strategy = argv[++i];
+        } else if (strcmp(argv[i], "--transfer") == 0) {
+            if (argc < i + 2) {
+                fprintf(stderr, "Expected TRANSFER_SIZE_GB argument\n");
+                exit(1);
+            }
+            transfer_size_gb = str_to_pos_u64(argv[++i]);
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
-            fprintf(stderr, "Usage: %s [--strat STRAT] [--mmap] SIZE_MB\n", argv[0]);
-            fprintf(stderr, "    STRAT:\n");
+            fprintf(stderr, "Usage: %s [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] BUFFER_SIZE_MB\n", argv[0]);
+            fprintf(stderr, "    STRATEGY:\n");
             fprintf(stderr, "        c_loop          : A standard C loop subject to compiler optimizations\n");
             fprintf(stderr, "        c_loop_unrolled : A standard C loop with 16 x 64bit writes unrolled\n");
             fprintf(stderr, "        memset          : Byte by byte memset(2) in a loop\n");
@@ -276,54 +307,67 @@ int main(int argc, char *argv[]) {
 #else
             fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD (C based)\n");
 #endif
+            fprintf(stderr, "    TRANSFER_SIZE_GB:     Total amount to transfer through memory in GB\n");
             exit(0);
         } else {
-            size_mb = str_to_pos_u64(argv[1]);
+            buffer_size_mb = str_to_pos_u64(argv[i]);
         }
     }
-    const size_t size = size_mb * 1024 * 1024;
+    const size_t buffer_size = buffer_size_mb * MB;
+    const size_t transfer_size = transfer_size_gb * GB;
+    if (buffer_size < page_size) {
+        fprintf(stderr, "Invalid BUFFER_SIZE (too small)\n");
+        exit(1);
+    }
+    if (transfer_size < buffer_size) {
+        fprintf(stderr, "Invalid TRANSFER_SIZE_GB (too small)\n");
+        exit(1);
+    }
     mem_write_test test;
-    if (strcmp(strat, "c_loop") == 0) {
+    if (strcmp(strategy, "c_loop") == 0) {
         test = mem_write_test_c_loop;
-    } else if (strcmp(strat, "c_loop_unrolled") == 0) {
+    } else if (strcmp(strategy, "c_loop_unrolled") == 0) {
         test = mem_write_test_c_loop_unrolled;
-    } else if (strcmp(strat, "memset") == 0) {
+    } else if (strcmp(strategy, "memset") == 0) {
         test = mem_write_test_memset;
-    } else if (strcmp(strat, "memcpy") == 0) {
+    } else if (strcmp(strategy, "memcpy") == 0) {
         test = mem_write_test_memcpy;
 #ifndef __APPLE__
-    } else if (strcmp(strat, "x86asm") == 0) {
+    } else if (strcmp(strategy, "x86asm") == 0) {
         test = mem_write_test_x86asm;
-    } else if (strcmp(strat, "x86asm_unrolled") == 0) {
+    } else if (strcmp(strategy, "x86asm_unrolled") == 0) {
         test = mem_write_test_x86asm_unrolled;
-    } else if (strcmp(strat, "avx2") == 0) {
+    } else if (strcmp(strategy, "avx2") == 0) {
         test = mem_write_test_avx2;
 #else
-    } else if (strcmp(strat, "armneon") == 0) {
+    } else if (strcmp(strategy, "armneon") == 0) {
         test = mem_write_test_armneon;
 #endif
     } else {
         fprintf(stderr, "Invalid test strategy\n");
         exit(1);
     }
-    printf("Strategy: %s\n", strat);
+    printf("Strategy: %s\n", strategy);
     printf("Page size: %ld\n", sysconf(_SC_PAGESIZE));
-    printf("Allocating memory: %.1fGB\n", size_mb / 1024.0);
-    void *mem = alloc(size, use_mmap);
+    printf("Target transfer size: %ldGB\n", transfer_size_gb);
+    if (buffer_size_mb >= 1024) {
+        printf("Allocating memory: %.1fGB\n", buffer_size_mb / 1024.0);
+    } else {
+        printf("Allocating memory: %ldMB\n", buffer_size_mb);
+    }
+    void *mem = alloc(buffer_size, use_mmap);
     printf("Pre-faulting memory...\n");
     // NOTE: Memset gets optimized out, and timing is maleffected if we don't prefill.
-    for (size_t i = 0; i < size; i++) {
+    for (size_t i = 0; i < buffer_size; i++) {
         ((char*)mem)[i] = 0;
     }
+    signal(SIGINT, on_interrupted);
     printf("Running test...\n");
-    double start = get_time();
-    size_t transferred = bench(mem, size, test);
-    double end = get_time();
-    printf("\nDONE\n");
-    dealloc(mem, size, use_mmap);
-    double transferred_gb = (double) transferred / 1024 / 1024 / 1024;
-    printf("Transferred: %.2fGB\n", transferred_gb);
-    printf("Time: %.3fs\n", end - start);
-    printf("Speed: %.2fGB/s\n", transferred_gb / (end - start));
+    start_time = get_time();
+    bench(mem, buffer_size, transfer_size, test);
+    double end_time = get_time();
+    printf("\nCOMPLETED\n");
+    dealloc(mem, buffer_size, use_mmap);
+    print_results(end_time - start_time);
     return 0;
 }
