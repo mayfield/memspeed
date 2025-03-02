@@ -49,7 +49,7 @@ static uint64_t str_to_pos_u64(char* raw) {
 }
 
 
-static void * restrict alloc(size_t size, int use_mmap) {
+static void *alloc(size_t size, int use_mmap) {
     void *ptr;
     if (use_mmap != 0) {
         printf("Using MMAP (SHARED)\n");
@@ -184,7 +184,7 @@ static void mem_write_test_c_loop(void *ptr, size_t size, uint64_t iter) {
     }
     uint64_t *mem = ptr;
     for (size_t i = 0; i < size / sizeof(uint64_t); i++) {
-        *(mem + i) = v;
+        mem[i] = v;
     }
 }
 
@@ -196,23 +196,15 @@ static void mem_write_test_c_loop_unrolled(void *ptr, size_t size, uint64_t iter
         v = (v << 8) | b;
     }
     uint64_t *mem = ptr;
-    for (size_t i = 0; i < size / sizeof(uint64_t); i += 16) {
-        *(mem + i) = v;
-        *(mem + i + 1) = v;
-        *(mem + i + 2) = v;
-        *(mem + i + 3) = v;
-        *(mem + i + 4) = v;
-        *(mem + i + 5) = v;
-        *(mem + i + 6) = v;
-        *(mem + i + 7) = v;
-        *(mem + i + 8) = v;
-        *(mem + i + 9) = v;
-        *(mem + i + 10) = v;
-        *(mem + i + 11) = v;
-        *(mem + i + 12) = v;
-        *(mem + i + 13) = v;
-        *(mem + i + 14) = v;
-        *(mem + i + 15) = v;
+    for (size_t i = 0; i < size / sizeof(uint64_t); i += 8) {
+        mem[i] = v;
+        mem[i + 1] = v;
+        mem[i + 2] = v;
+        mem[i + 3] = v;
+        mem[i + 4] = v;
+        mem[i + 5] = v;
+        mem[i + 6] = v;
+        mem[i + 7] = v;
     }
 }
 
@@ -238,35 +230,52 @@ static void mem_write_test_memcpy(void *ptr, size_t size, uint64_t iter) {
 static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
     const size_t iterations = transfer_size / buffer_size;
     uint64_t iter;
-    transferred = 0;
-    int gb_dot = 0;
-    for (iter = 1; iter <= iterations; iter++) {
+    int gb_count = 0;
+    size_t last_draw_sz = 0;
+    start_time = get_time();
+    double last_draw_time = start_time;
+    for (iter = 1, transferred = 0; iter <= iterations; iter++) {
         test(mem, buffer_size, iter);
-        if (((uint32_t*) mem)[1] == 0xdeadbeef) { // Force compiler to perform write..
-            printf("Memory Error!\n");
-            exit(1);
-        }
         transferred += buffer_size;
-        // Print one dot for every GB...
-        for (; gb_dot * GB < transferred; gb_dot++) {
-            printf(".");
-            fflush(stdout);
+        if (0) {
+            for (; gb_count * GB < transferred; gb_count++) {
+                printf(".");
+                fflush(stdout);
+            }
+        } else {
+            int draw = 0;
+            for (; gb_count * GB < transferred; gb_count++) {
+                draw = 1;
+            }
+            if (draw) {
+                double t = get_time();
+                double elapsed = t - last_draw_time;
+                if (elapsed > 0.100) {
+                    printf("\r%80s\r", "");
+                    printf("\rCurrent Speed: %.3f GB/s",
+                        (transferred - last_draw_sz) / (t - last_draw_time) / GB);
+                    fflush(stdout);
+                    last_draw_sz = transferred;
+                    last_draw_time = t;
+                }
+            }
         }
     }
+    printf("\n");
 }
 
 
 static void print_results(double time) {
     double transferred_gb = (double) transferred / GB;
-    printf("Transferred: %.2fGB\n", transferred_gb);
-    printf("Time: %.3fs\n", time);
-    printf("Speed: %.2fGB/s\n", transferred_gb / time);
+    printf("Transferred: %.1f GB\n", transferred_gb);
+    printf("Time: %.3f s\n", time);
+    printf("Speed: %.3f GB/s\n", transferred_gb / time);
 }
 
 
 static void on_interrupted(int _) {
     double end_time = get_time();
-    printf("\nINTERRUPTED\n");
+    printf("\n\nINTERRUPTED\n\n");
     print_results(end_time - start_time);
     exit(1);
 }
@@ -279,13 +288,13 @@ int main(int argc, char *argv[]) {
     char *strategy = "c_loop";
     int use_mmap = 0;
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--strategy") == 0) {
+        if (strncmp(argv[i], "--strat", 7) == 0) {
             if (argc < i + 2) {
                 fprintf(stderr, "Expected STRATEGY argument\n");
                 exit(1);
             }
             strategy = argv[++i];
-        } else if (strcmp(argv[i], "--transfer") == 0) {
+        } else if (strncmp(argv[i], "--trans", 7) == 0) {
             if (argc < i + 2) {
                 fprintf(stderr, "Expected TRANSFER_SIZE_GB argument\n");
                 exit(1);
@@ -294,7 +303,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
-            fprintf(stderr, "Usage: %s [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] BUFFER_SIZE_MB\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY] [--mmap] [--trans[fer] TRANSFER_SIZE_GB] BUFFER_SIZE_MB\n", argv[0]);
             fprintf(stderr, "    STRATEGY:\n");
             fprintf(stderr, "        c_loop          : A standard C loop subject to compiler optimizations\n");
             fprintf(stderr, "        c_loop_unrolled : A standard C loop with 16 x 64bit writes unrolled\n");
@@ -349,11 +358,11 @@ int main(int argc, char *argv[]) {
     }
     printf("Strategy: %s\n", strategy);
     printf("Page size: %ld\n", sysconf(_SC_PAGESIZE));
-    printf("Target transfer size: %ldGB\n", transfer_size_gb);
+    printf("Target transfer size: %ld GB\n", transfer_size_gb);
     if (buffer_size_mb >= 1024) {
-        printf("Allocating memory: %.1fGB\n", buffer_size_mb / 1024.0);
+        printf("Allocating memory: %.2f GB\n", buffer_size_mb / 1024.0);
     } else {
-        printf("Allocating memory: %ldMB\n", buffer_size_mb);
+        printf("Allocating memory: %ld MB\n", buffer_size_mb);
     }
     void *mem = alloc(buffer_size, use_mmap);
     printf("Pre-faulting memory...\n");
@@ -363,10 +372,9 @@ int main(int argc, char *argv[]) {
     }
     signal(SIGINT, on_interrupted);
     printf("Running test...\n");
-    start_time = get_time();
     bench(mem, buffer_size, transfer_size, test);
     double end_time = get_time();
-    printf("\nCOMPLETED\n");
+    printf("\nCOMPLETED\n\n");
     dealloc(mem, buffer_size, use_mmap);
     print_results(end_time - start_time);
     return 0;

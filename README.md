@@ -45,7 +45,7 @@ Example Linux output...
 Usage: ./memspeed [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] BUFFER_SIZE_MB
     STRATEGY:
         c_loop          : A standard C loop subject to compiler optimizations
-        c_loop_unrolled : A standard C loop with 16 x 64bit writes unrolled
+        c_loop_unrolled : A standard C loop with 8 x 64bit write batches
         memset          : Byte by byte memset(2) in a loop
         memcpy          : 8 byte stride memcpy from stack buffer
         x86asm          : Non-termporal 64bit x86 ASM loop
