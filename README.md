@@ -10,17 +10,21 @@ for (u64 i = 0; i < size / sizeof(u64); i++) {
 }
 ```
 
-Care is taken to prevent compilers (gcc, clang) from optimizing out the loop.  The data written
-to memory is altered between iterations but is not verified, i.e. write-only.  Some of the tests
-use "non-temporal" strategies, sometimes called streaming or out of order writes which can be
-faster on lower end CPUs and/or with higher buffer sizes that exceed CPU caches.  If you're
-interested in exploring your cache sizes, play with the buffer size and observe the jumps in speed.
+ * Care is taken to prevent compilers (gcc, clang) from optimizing out the loop.
+ * Data written to memory is altered between iterations but is not verified, i.e. write-only.
+ * Some of the test strategies use "non-temporal" instructions, sometimes called streaming
+   or out of order writes.  This can be faster on lower end CPUs and/or with higher buffer sizes
+   that exceed CPU caches.
+ * If you're interested in exploring your cache sizes, play with the buffer size and observe the
+   jumps in speed.
+ * Some platforms may achieve higher overall bandwidth by running multiple copies.
+ * Memory subsystems are far more complicated than a single "mega-transfers" number
 
 
 Compatibility
 --------
-x86 (64bit) Linux
-ARM macOS
+* x86 (64bit) Linux
+* ARM macOS
 
 
 Building
