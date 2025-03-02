@@ -5,3 +5,6 @@ default: memspeed
 
 memspeed: memspeed.c Makefile
 	$(CC) $(CFLAGS) memspeed.c -o $@
+
+clean:
+	rm -f memspeed
