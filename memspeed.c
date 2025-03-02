@@ -310,8 +310,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        memset          : Byte by byte memset(2) in a loop\n");
             fprintf(stderr, "        memcpy          : 8 byte stride memcpy from stack buffer\n");
 #ifndef __APPLE__
-            fprintf(stderr, "        x86asm          : Non-termporal 64bit x86 ASM loop\n");
-            fprintf(stderr, "        x86asm_unrolled : Non-termporal 64bit x86 ASM, 8 chunks unrolled\n");
+            fprintf(stderr, "        x86asm          : Non-temporal 64bit x86 ASM loop\n");
+            fprintf(stderr, "        x86asm_unrolled : Non-temporal 64bit x86 ASM, 8 chunks unrolled\n");
             fprintf(stderr, "        avx2            : AVX2 intrinsics (C based)\n");
 #else
             fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD (C based)\n");

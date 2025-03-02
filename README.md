@@ -48,8 +48,8 @@ Usage: ./memspeed [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] B
         c_loop_unrolled : A standard C loop with 8 x 64bit writes
         memset          : Byte by byte memset(2) in a loop
         memcpy          : 8 byte stride memcpy from stack buffer
-        x86asm          : Non-termporal 64bit x86 ASM loop
-        x86asm_unrolled : Non-termporal 64bit x86 ASM, 8 chunks unrolled
+        x86asm          : Non-temporal 64bit x86 ASM loop
+        x86asm_unrolled : Non-temporal 64bit x86 ASM, 8 chunks unrolled
         avx2            : AVX2 intrinsics (C based)
     TRANSFER_SIZE_GB:     Total amount to transfer through memory in GB
 ```
