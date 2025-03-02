@@ -37,12 +37,12 @@ cc -O3 -mtune=native -march=native -Wall memspeed.c -o memspeed
 
 Usage
 --------
-Options will vary between Linux and macOS.
+NOTE: Options will vary between Linux and macOS.
 
-Example Linux output...
+Example Linux usage...
 ```
 :; ./memspeed --help
-Usage: ./memspeed [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] BUFFER_SIZE_MB
+Usage: ./memspeed [--strat[egy] STRATEGY] [--mmap] [--trans[fer] TRANSFER_SIZE_GB] BUFFER_SIZE_MB
     STRATEGY:
         c_loop          : A standard C loop subject to compiler optimizations
         c_loop_unrolled : A standard C loop with 8 x 64bit writes
@@ -57,19 +57,28 @@ Usage: ./memspeed [--strategy STRATEGY] [--mmap] [--transfer TRANSFER_SIZE_GB] B
 
 Running
 --------
+**Basic**
 ```
-:; ./memspeed --transfer 113 99
-make: Nothing to be done for 'default'.
+:; ./memspeed
 Strategy: c_loop
 Page size: 4096
-Target transfer size: 113GB
-Allocating memory: 99MB
+Target transfer size: 100 GB
+Allocating memory: 4.00 GB
 Using MALLOC
 Pre-faulting memory...
 Running test...
-.................................................................................................................
+Current Speed: 25.388 GB/s                                                      
+
 COMPLETED
-Transferred: 112.92GB
-Time: 3.707s
-Speed: 30.46GB/s
+
+Transferred: 100.0 GB
+Time: 3.960 s
+Speed: 25.255 GB/s
 ```
+
+**Advanced**
+Run 8 copies, pinned to first 8 cpu cores.
+```
+for x in $(seq 0 7) ; do taskset -c $x ./memspeed --strat avx2 --transfer 100 128 & done ; wait
+```
+
