@@ -30,11 +30,9 @@ Compatibility
 Building
 --------
 ```shell
-make
-cc -O3 -mtune=native -march=native -Wall -Wno-unused-function -fverbose-asm memspeed.c -o memspeed
+:; make
+cc -O3 -mtune=native -march=native -Wall memspeed.c -o memspeed
 ```
-
-Produces `memspeed` executable in the project root.
 
 
 Usage

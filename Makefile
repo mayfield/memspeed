@@ -1,5 +1,5 @@
 CC := cc
-CFLAGS := -O3 -mtune=native -march=native -Wall -Wno-unused-function -fverbose-asm
+CFLAGS := -O3 -mtune=native -march=native -Wall
 
 default: memspeed
 
