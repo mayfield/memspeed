@@ -306,7 +306,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY] [--mmap] [--trans[fer] TRANSFER_SIZE_GB] BUFFER_SIZE_MB\n", argv[0]);
             fprintf(stderr, "    STRATEGY:\n");
             fprintf(stderr, "        c_loop          : A standard C loop subject to compiler optimizations\n");
-            fprintf(stderr, "        c_loop_unrolled : A standard C loop with 16 x 64bit writes unrolled\n");
+            fprintf(stderr, "        c_loop_unrolled : A standard C loop with 8 x 64bit writes\n");
             fprintf(stderr, "        memset          : Byte by byte memset(2) in a loop\n");
             fprintf(stderr, "        memcpy          : 8 byte stride memcpy from stack buffer\n");
 #ifndef __APPLE__
