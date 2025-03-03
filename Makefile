@@ -1,5 +1,5 @@
 CC := cc
-CFLAGS := -O3 -mtune=native -march=native -Wall
+CFLAGS := -O3 -mtune=native -march=native -Wall -mno-avx512f
 
 default: memspeed
 

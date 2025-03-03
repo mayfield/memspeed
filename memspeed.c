@@ -80,7 +80,7 @@ static void dealloc(void *ptr, size_t size, int use_mmap) {
 
 
 #ifndef __APPLE__
-static void mem_write_test_x86asm(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_nt(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -106,7 +106,32 @@ static void mem_write_test_x86asm(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_x86asm_unrolled_x8(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm(void *ptr, size_t size, uint64_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t); 
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "movq %[mem], %%rdx\n\t"
+        "movq %[len], %%rcx\n\t"
+    "1:\n\t"
+        "movq %[v], (%%rdx)\n\t"
+        "addq $8, %%rdx\n\t"
+        "dec %%rcx\n\t"
+        "jnz 1b\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "rcx", "rdx", "memory"
+    );
+}
+
+
+static void mem_write_test_x86asm_nt_x8(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -139,7 +164,39 @@ static void mem_write_test_x86asm_unrolled_x8(void *ptr, size_t size, uint64_t i
 }
 
 
-static void mem_write_test_x86asm_unrolled_x32(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_x8(void *ptr, size_t size, uint64_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t) / 8; 
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "movq %[mem], %%rdx\n\t"
+        "movq %[len], %%rcx\n\t"
+    "1:\n\t"
+        "movq %[v], (%%rdx)\n\t"
+        "movq %[v], 8(%%rdx)\n\t"
+        "movq %[v], 16(%%rdx)\n\t"
+        "movq %[v], 24(%%rdx)\n\t"
+        "movq %[v], 32(%%rdx)\n\t"
+        "movq %[v], 40(%%rdx)\n\t"
+        "movq %[v], 48(%%rdx)\n\t"
+        "movq %[v], 56(%%rdx)\n\t"
+        "addq $64, %%rdx\n\t"
+        "dec %%rcx\n\t"
+        "jnz 1b\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "rcx", "rdx", "memory"
+    );
+}
+
+
+static void mem_write_test_x86asm_nt_x32(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -196,6 +253,77 @@ static void mem_write_test_x86asm_unrolled_x32(void *ptr, size_t size, uint64_t 
 }
 
 
+static void mem_write_test_x86asm_x32(void *ptr, size_t size, uint64_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t) / 32; 
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "movq %[mem], %%rdx\n\t"
+        "movq %[len], %%rcx\n\t"
+    "1:\n\t"
+        "movq %[v], (%%rdx)\n\t"
+        "movq %[v], 8(%%rdx)\n\t"
+        "movq %[v], 16(%%rdx)\n\t"
+        "movq %[v], 24(%%rdx)\n\t"
+        "movq %[v], 32(%%rdx)\n\t"
+        "movq %[v], 40(%%rdx)\n\t"
+        "movq %[v], 48(%%rdx)\n\t"
+        "movq %[v], 56(%%rdx)\n\t"
+        "movq %[v], 64(%%rdx)\n\t"
+        "movq %[v], 72(%%rdx)\n\t"
+        "movq %[v], 80(%%rdx)\n\t"
+        "movq %[v], 88(%%rdx)\n\t"
+        "movq %[v], 96(%%rdx)\n\t"
+        "movq %[v], 104(%%rdx)\n\t"
+        "movq %[v], 112(%%rdx)\n\t"
+        "movq %[v], 120(%%rdx)\n\t"
+        "movq %[v], 128(%%rdx)\n\t"
+        "movq %[v], 136(%%rdx)\n\t"
+        "movq %[v], 144(%%rdx)\n\t"
+        "movq %[v], 152(%%rdx)\n\t"
+        "movq %[v], 160(%%rdx)\n\t"
+        "movq %[v], 168(%%rdx)\n\t"
+        "movq %[v], 176(%%rdx)\n\t"
+        "movq %[v], 184(%%rdx)\n\t"
+        "movq %[v], 192(%%rdx)\n\t"
+        "movq %[v], 200(%%rdx)\n\t"
+        "movq %[v], 208(%%rdx)\n\t"
+        "movq %[v], 216(%%rdx)\n\t"
+        "movq %[v], 224(%%rdx)\n\t"
+        "movq %[v], 232(%%rdx)\n\t"
+        "movq %[v], 240(%%rdx)\n\t"
+        "movq %[v], 248(%%rdx)\n\t"
+        "addq $256, %%rdx\n\t"
+        "dec %%rcx\n\t"
+        "jnz 1b\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "rcx", "rdx", "memory"
+    );
+}
+
+
+static void mem_write_test_avx2_nt(void *ptr, size_t size, uint64_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    const __m256i vec = _mm256_set1_epi64x(v);
+    __m256i *mem = ptr;
+    for (size_t i = 0; i < size / sizeof(__m256i); i++) {
+         _mm256_stream_si256(mem + i, vec);
+    }
+    _mm_sfence();
+}
+
+
 static void mem_write_test_avx2(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -204,17 +332,28 @@ static void mem_write_test_avx2(void *ptr, size_t size, uint64_t iter) {
     }
     const __m256i vec = _mm256_set1_epi64x(v);
     __m256i *mem = ptr;
-    for (size_t i = 0; i < size / sizeof(__m256i); i += 4) {
-         _mm256_stream_si256(mem + i, vec);
-         _mm256_stream_si256(mem + i + 1, vec);
-         _mm256_stream_si256(mem + i + 2, vec);
-         _mm256_stream_si256(mem + i + 3, vec);
+    for (size_t i = 0; i < size / sizeof(__m256i); i++) {
+         _mm256_store_si256(mem + i, vec);
+    }
+}
+
+
+# ifdef __AVX512F__
+static void mem_write_test_avx512_nt(void *ptr, size_t size, uint64_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    const __m512i vec = _mm512_set1_epi64(v);
+    __m512i *mem = ptr;
+    for (size_t i = 0; i < size / sizeof(__m512i); i++) {
+         _mm512_stream_si512(mem + i, vec);
     }
     _mm_sfence();
 }
 
 
-# ifdef __AVX512F__
 static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -223,13 +362,9 @@ static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
     }
     const __m512i vec = _mm512_set1_epi64(v);
     __m512i *mem = ptr;
-    for (size_t i = 0; i < size / sizeof(__m512i); i += 4) {
-         _mm512_stream_si512(mem + i, vec);
-         _mm512_stream_si512(mem + i + 1, vec);
-         _mm512_stream_si512(mem + i + 2, vec);
-         _mm512_stream_si512(mem + i + 3, vec);
+    for (size_t i = 0; i < size / sizeof(__m512i); i++) {
+         _mm512_store_si512(mem + i, vec);
     }
-    _mm_sfence();
 }
 # endif
 
@@ -243,17 +378,14 @@ void mem_write_test_armneon(void *ptr, size_t size, uint64_t iter) {
     }
     uint64x2_t vec = vdupq_n_u64(v);
     uint64x2_t *mem = ptr;
-    for (size_t i = 0; i < size / sizeof(uint64x2_t); i += 4) {
+    for (size_t i = 0; i < size / sizeof(uint64x2_t); i++) {
         vst1q_u64((uint64_t*)(mem + i), vec);
-        vst1q_u64((uint64_t*)(mem + i + 1), vec);
-        vst1q_u64((uint64_t*)(mem + i + 2), vec);
-        vst1q_u64((uint64_t*)(mem + i + 3), vec);
     }
 }
 #endif
 
 
-static void mem_write_test_c_loop(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -266,7 +398,7 @@ static void mem_write_test_c_loop(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_c_loop_unrolled_x8(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x8(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -286,7 +418,7 @@ static void mem_write_test_c_loop_unrolled_x8(void *ptr, size_t size, uint64_t i
 }
 
 
-static void mem_write_test_c_loop_unrolled_x32(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x32(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -302,7 +434,7 @@ static void mem_write_test_c_loop_unrolled_x32(void *ptr, size_t size, uint64_t 
 }
 
 
-static void mem_write_test_c_loop_unrolled_x128(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x128(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
     for (int i = 0; i < sizeof(uint64_t); i++) {
@@ -337,14 +469,18 @@ static void mem_write_test_memset(void *ptr, size_t size, uint64_t iter) {
 
 
 static void mem_write_test_memcpy(void *ptr, size_t size, uint64_t iter) {
+    char * restrict scratch = aligned_alloc(page_size, page_size);
+    if (scratch == NULL) {
+        fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+        exit(1);
+    }
     const char b = iter % 0xff;
-    char buf[8];
-    for (int i = 0; i < sizeof(buf); i++) {
-        buf[i] = b;
+    memset(scratch, b, page_size);
+    char *mem = ptr;
+    for (size_t i = 0; i < size; i += page_size) {
+        memcpy(mem + i, scratch, page_size);
     }
-    for (size_t i = 0; i < size; i += sizeof(buf)) {
-        memcpy((char*) ptr + i, buf, sizeof(buf));
-    }
+    free(scratch);
 }
 
 
@@ -406,7 +542,7 @@ int main(int argc, char *argv[]) {
     page_size = sysconf(_SC_PAGESIZE);
     size_t buffer_size_mb = 4 * 1024;
     size_t transfer_size_gb = 100;
-    char *strategy = "c_loop";
+    char *strategy = "c";
     int use_mmap = 0;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--strat", 7) == 0) {
@@ -424,25 +560,39 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
-            fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY] [--mmap] [--trans[fer] TRANSFER_SIZE_GB] BUFFER_SIZE_MB\n", argv[0]);
+            char pad[128] = {0};
+            memset(pad, 0, sizeof(pad));
+            memset(pad, ' ', MIN(sizeof(pad) - 1, strlen(argv[0])));
+            fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY]\n", argv[0]);
+            fprintf(stderr, "       %s [--mmap]\n", pad);
+            fprintf(stderr, "       %s [--trans[fer] TRANSFER_SIZE_GB]\n", pad);
+            fprintf(stderr, "       %s [--threads THREAD_COUNT]\n", pad);
+            fprintf(stderr, "       %s BUFFER_SIZE_MB\n", pad);
+            fprintf(stderr, "\n");
             fprintf(stderr, "    STRATEGY:\n");
-            fprintf(stderr, "        c_loop               : A standard C loop subject to compiler optimizations\n");
-            fprintf(stderr, "        c_loop_unrolled_x8   : A standard C loop with 8 x 64bit writes\n");
-            fprintf(stderr, "        c_loop_unrolled_x32  : A standard C loop with 32 x 64bit writes\n");
-            fprintf(stderr, "        c_loop_unrolled_x128 : A standard C loop with 128 x 64bit writes\n");
-            fprintf(stderr, "        memset               : Byte by byte memset(2) in a loop\n");
-            fprintf(stderr, "        memcpy               : 8 byte stride memcpy from stack buffer\n");
+            fprintf(stderr, "        c               : A C loop subject to compiler optimizations\n");
+            fprintf(stderr, "        c_x8            : A C loop with 8 x 64bit writes\n");
+            fprintf(stderr, "        c_x32           : A C loop with 32 x 64bit writes\n");
+            fprintf(stderr, "        c_x128          : A C loop with 128 x 64bit writes\n");
+            fprintf(stderr, "        memset          : Byte by byte memset() in a loop\n");
+            fprintf(stderr, "        memcpy          : Aligned page memcpy in a loop\n");
 #ifndef __APPLE__
-            fprintf(stderr, "        x86asm               : Non-temporal 64bit x86 ASM, MOVNTI\n");
-            fprintf(stderr, "        x86asm_unrolled_x8   : Non-temporal 64bit x86 ASM, 8 x MOVNTI\n");
-            fprintf(stderr, "        x86asm_unrolled_x32  : Non-temporal 64bit x86 ASM, 32 x MOVNTI\n");
-            fprintf(stderr, "        avx2                 : 256bit AVX2 intrinsics (C based)\n");
+            fprintf(stderr, "        x86asm          : 64bit x86 ASM\n");
+            fprintf(stderr, "        x86asm_nt       : 64bit x86 ASM (non-temporal)\n");
+            fprintf(stderr, "        x86asm_x8       : 8 x 64bit x86 ASM\n");
+            fprintf(stderr, "        x86asm_nt_x8    : 8 x 64bit x86 ASM (non-temporal)\n");
+            fprintf(stderr, "        x86asm_x32      : 32 x 64bit x86 ASM\n");
+            fprintf(stderr, "        x86asm_nt_x32   : 32 x 64bit x86 ASM (non-temporal)\n");
+            fprintf(stderr, "        avx2            : 256bit AVX2 intrinsics\n");
+            fprintf(stderr, "        avx2_nt         : 256bit AVX2 intrinsics (non-temporal)\n");
 # ifdef __AVX512F__
-            fprintf(stderr, "        avx512               : 512bit AVX512 intrinsics (C based)\n");
+            fprintf(stderr, "        avx512          : 512bit AVX512 intrinsics\n");
+            fprintf(stderr, "        avx512_nt       : 512bit AVX512 intrinsics (non-temporal)\n");
 # endif
 #else
-            fprintf(stderr, "        armneon              : 128bit ARM NEON SIMD (C based)\n");
+            fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD intrinsics\n");
 #endif
+            fprintf(stderr, "\n");
             fprintf(stderr, "    TRANSFER_SIZE_GB: Total amount to transfer through memory in GB\n");
             exit(0);
         } else {
@@ -460,14 +610,14 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     mem_write_test test;
-    if (strcmp(strategy, "c_loop") == 0) {
-        test = mem_write_test_c_loop;
-    } else if (strcmp(strategy, "c_loop_unrolled_x8") == 0) {
-        test = mem_write_test_c_loop_unrolled_x8;
-    } else if (strcmp(strategy, "c_loop_unrolled_x32") == 0) {
-        test = mem_write_test_c_loop_unrolled_x32;
-    } else if (strcmp(strategy, "c_loop_unrolled_x128") == 0) {
-        test = mem_write_test_c_loop_unrolled_x128;
+    if (strcmp(strategy, "c") == 0) {
+        test = mem_write_test_c;
+    } else if (strcmp(strategy, "c_x8") == 0) {
+        test = mem_write_test_c_x8;
+    } else if (strcmp(strategy, "c_x32") == 0) {
+        test = mem_write_test_c_x32;
+    } else if (strcmp(strategy, "c_x128") == 0) {
+        test = mem_write_test_c_x128;
     } else if (strcmp(strategy, "memset") == 0) {
         test = mem_write_test_memset;
     } else if (strcmp(strategy, "memcpy") == 0) {
@@ -475,15 +625,25 @@ int main(int argc, char *argv[]) {
 #ifndef __APPLE__
     } else if (strcmp(strategy, "x86asm") == 0) {
         test = mem_write_test_x86asm;
-    } else if (strcmp(strategy, "x86asm_unrolled_x8") == 0) {
-        test = mem_write_test_x86asm_unrolled_x8;
-    } else if (strcmp(strategy, "x86asm_unrolled_x32") == 0) {
-        test = mem_write_test_x86asm_unrolled_x32;
+    } else if (strcmp(strategy, "x86asm_nt") == 0) {
+        test = mem_write_test_x86asm_nt;
+    } else if (strcmp(strategy, "x86asm_x8") == 0) {
+        test = mem_write_test_x86asm_x8;
+    } else if (strcmp(strategy, "x86asm_nt_x8") == 0) {
+        test = mem_write_test_x86asm_nt_x8;
+    } else if (strcmp(strategy, "x86asm_x32") == 0) {
+        test = mem_write_test_x86asm_x32;
+    } else if (strcmp(strategy, "x86asm_nt_x32") == 0) {
+        test = mem_write_test_x86asm_nt_x32;
     } else if (strcmp(strategy, "avx2") == 0) {
         test = mem_write_test_avx2;
+    } else if (strcmp(strategy, "avx2_nt") == 0) {
+        test = mem_write_test_avx2_nt;
 # ifdef __AVX512F__
     } else if (strcmp(strategy, "avx512") == 0) {
         test = mem_write_test_avx512;
+    } else if (strcmp(strategy, "avx512_nt") == 0) {
+        test = mem_write_test_avx512_nt;
 # endif
 #else
     } else if (strcmp(strategy, "armneon") == 0) {
