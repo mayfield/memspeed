@@ -1,5 +1,5 @@
 CC := cc
-CFLAGS := -O3 -mtune=native -march=native -Wall -mavx512f -mavx2
+CFLAGS := -O3 -mtune=native -march=native -Wall
 
 default: memspeed
 

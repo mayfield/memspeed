@@ -214,6 +214,7 @@ static void mem_write_test_avx2(void *ptr, size_t size, uint64_t iter) {
 }
 
 
+# ifdef __AVX512F__
 static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -230,6 +231,7 @@ static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
     }
     _mm_sfence();
 }
+# endif
 
 #else
 
@@ -435,7 +437,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        x86asm_unrolled_x8   : Non-temporal 64bit x86 ASM, 8 x MOVNTI\n");
             fprintf(stderr, "        x86asm_unrolled_x32  : Non-temporal 64bit x86 ASM, 32 x MOVNTI\n");
             fprintf(stderr, "        avx2                 : 256bit AVX2 intrinsics (C based)\n");
+# ifdef __AVX512F__
             fprintf(stderr, "        avx512               : 512bit AVX512 intrinsics (C based)\n");
+# endif
 #else
             fprintf(stderr, "        armneon              : 128bit ARM NEON SIMD (C based)\n");
 #endif
@@ -477,8 +481,10 @@ int main(int argc, char *argv[]) {
         test = mem_write_test_x86asm_unrolled_x32;
     } else if (strcmp(strategy, "avx2") == 0) {
         test = mem_write_test_avx2;
+# ifdef __AVX512F__
     } else if (strcmp(strategy, "avx512") == 0) {
         test = mem_write_test_avx512;
+# endif
 #else
     } else if (strcmp(strategy, "armneon") == 0) {
         test = mem_write_test_armneon;
