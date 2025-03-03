@@ -20,6 +20,7 @@ for (u64 i = 0; i < size / sizeof(u64); i++) {
  * Some platforms may achieve higher overall bandwidth by running multiple copies.
  * Memory subsystems are far more complicated than a single "mega-transfers" number
 
+https://github.com/user-attachments/assets/4be00edb-746f-4131-8f6a-555299536ee6
 
 Compatibility
 --------
