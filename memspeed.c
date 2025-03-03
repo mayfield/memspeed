@@ -429,7 +429,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        c_loop               : A standard C loop subject to compiler optimizations\n");
             fprintf(stderr, "        c_loop_unrolled_x8   : A standard C loop with 8 x 64bit writes\n");
             fprintf(stderr, "        c_loop_unrolled_x32  : A standard C loop with 32 x 64bit writes\n");
-            fprintf(stderr, "        c_loop_unrolled_x129 : A standard C loop with 128 x 64bit writes\n");
+            fprintf(stderr, "        c_loop_unrolled_x128 : A standard C loop with 128 x 64bit writes\n");
             fprintf(stderr, "        memset               : Byte by byte memset(2) in a loop\n");
             fprintf(stderr, "        memcpy               : 8 byte stride memcpy from stack buffer\n");
 #ifndef __APPLE__
