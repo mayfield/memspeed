@@ -1,9 +1,6 @@
-
-
-
 memspeed
 ========
-Simple C/ASM based memory bandwidth benchmark.
+Simple C/ASM based memory/cache bandwidth benchmark.
 
 This test essentially boils down to various implementations of this loop...
 ```c
