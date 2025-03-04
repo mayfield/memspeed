@@ -1,5 +1,3 @@
-#define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -111,7 +109,7 @@ static void *alloc(size_t size, int use_mmap) {
     void *ptr;
     if (use_mmap != 0) {
         printf("Using MMAP (SHARED)\n");
-        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANON, -1, 0);
+        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
         if (ptr == MAP_FAILED) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
             exit(1);
@@ -144,7 +142,7 @@ static void mem_write_test_x86asm_nt(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t); 
+    size_t len = size / sizeof(uint64_t);
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -170,7 +168,7 @@ static void mem_write_test_x86asm(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t); 
+    size_t len = size / sizeof(uint64_t);
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -195,7 +193,7 @@ static void mem_write_test_x86asm_nt_x8(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t) / 8; 
+    size_t len = size / sizeof(uint64_t) / 8;
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -228,7 +226,7 @@ static void mem_write_test_x86asm_x8(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t) / 8; 
+    size_t len = size / sizeof(uint64_t) / 8;
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -260,7 +258,7 @@ static void mem_write_test_x86asm_nt_x32(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t) / 32; 
+    size_t len = size / sizeof(uint64_t) / 32;
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -317,7 +315,7 @@ static void mem_write_test_x86asm_x32(void *ptr, size_t size, size_t iter) {
     for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
-    size_t len = size / sizeof(uint64_t) / 32; 
+    size_t len = size / sizeof(uint64_t) / 32;
     uint64_t *mem = ptr;
     __asm__ __volatile__(
         "movq %[mem], %%rdx\n\t"
@@ -426,7 +424,123 @@ static void mem_write_test_avx512(void *ptr, size_t size, size_t iter) {
 }
 # endif
 
-#else
+#else /* APPLE */
+
+static void mem_write_test_armasm(void *ptr, size_t size, size_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t);
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "mov x0, %[mem]\n\t"
+        "mov x1, %[len]\n\t"
+    "1: \n\t"
+        "stp %[v], %[v], [x0]\n\t"
+        "add x0, x0, #16\n\t"
+        "subs x1, x1, #2\n\t"
+        "b.gt 1b\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "x0", "x1", "memory"
+    );
+}
+
+
+static void mem_write_test_armasm_x8(void *ptr, size_t size, size_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t);
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "mov x0, %[mem]\n\t"
+        "mov x1, %[len]\n\t"
+    "1: \n\t"
+        "stp %[v], %[v], [x0]\n\t"
+        "stp %[v], %[v], [x0, #16]\n\t"
+        "stp %[v], %[v], [x0, #32]\n\t"
+        "stp %[v], %[v], [x0, #48]\n\t"
+        "stp %[v], %[v], [x0, #64]\n\t"
+        "stp %[v], %[v], [x0, #80]\n\t"
+        "stp %[v], %[v], [x0, #96]\n\t"
+        "stp %[v], %[v], [x0, #112]\n\t"
+        "add x0, x0, #128\n\t"
+        "subs x1, x1, #16\n\t"
+        "b.gt 1b\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "x0", "x1", "memory"
+    );
+}
+
+
+static void mem_write_test_armasm_nt(void *ptr, size_t size, size_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t);
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "mov x0, %[mem]\n\t"
+        "mov x1, %[len]\n\t"
+    "1: \n\t"
+        "stnp %[v], %[v], [x0]\n\t"
+        "add x0, x0, #16\n\t"
+        "subs x1, x1, #2\n\t"
+        "b.gt 1b\n\t"
+        "dsb ishst\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "x0", "x1", "memory"
+    );
+}
+
+
+static void mem_write_test_armasm_nt_x8(void *ptr, size_t size, size_t iter) {
+    const uint64_t b = iter % 0xff;
+    uint64_t v = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
+        v = (v << 8) | b;
+    }
+    size_t len = size / sizeof(uint64_t);
+    uint64_t *mem = ptr;
+    __asm__ __volatile__(
+        "mov x0, %[mem]\n\t"
+        "mov x1, %[len]\n\t"
+    "1: \n\t"
+        "stnp %[v], %[v], [x0]\n\t"
+        "stnp %[v], %[v], [x0, #16]\n\t"
+        "stnp %[v], %[v], [x0, #32]\n\t"
+        "stnp %[v], %[v], [x0, #48]\n\t"
+        "stnp %[v], %[v], [x0, #64]\n\t"
+        "stnp %[v], %[v], [x0, #80]\n\t"
+        "stnp %[v], %[v], [x0, #96]\n\t"
+        "stnp %[v], %[v], [x0, #112]\n\t"
+        "add x0, x0, #128\n\t"
+        "subs x1, x1, #16\n\t"
+        "b.gt 1b\n\t"
+        "dsb ishst\n\t"
+        :
+        : [mem] "r" (mem),
+          [len] "r" (len),
+          [v] "r" (v)
+        : "x0", "x1", "memory"
+    );
+}
+
 
 void mem_write_test_armneon(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
@@ -437,7 +551,7 @@ void mem_write_test_armneon(void *ptr, size_t size, size_t iter) {
     uint64x2_t vec = vdupq_n_u64(v);
     uint64x2_t *mem = ptr;
     for (size_t i = 0; i < size / sizeof(uint64x2_t); i++) {
-        vst1q_u64((uint64_t*)(mem + i), vec);
+        vst1q_u64((uint64_t*) (mem + i), vec);
     }
 }
 #endif
@@ -667,7 +781,7 @@ static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write
 static void print_results(double time) {
     printf("Transferred: %s\n", human_size(g_transferred));
     printf("Time: %.3f s\n", time);
-    printf("Speed: %.3f GB/s\n", g_transferred / GB / time);
+    printf("Speed: %.3f GB/s\n", ((double) g_transferred) / GB / time);
 }
 
 
@@ -742,6 +856,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        avx512_nt       : 512bit AVX512 intrinsics (non-temporal)\n");
 # endif
 #else
+            fprintf(stderr, "        armasm          : 128bit ARM ASM (STP)\n");
+            fprintf(stderr, "        armasm_nt       : 128bit ARM ASM (non-temporal, STNP)\n");
+            fprintf(stderr, "        armasm_x8       : 8 x 128bit ARM ASM (STP)\n");
             fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD intrinsics\n");
 #endif
             fprintf(stderr, "\n");
@@ -808,6 +925,14 @@ int main(int argc, char *argv[]) {
         test = mem_write_test_avx512_nt;
 # endif
 #else
+    } else if (strcmp(strategy, "armasm") == 0) {
+        test = mem_write_test_armasm;
+    } else if (strcmp(strategy, "armasm_x8") == 0) {
+        test = mem_write_test_armasm_x8;
+    } else if (strcmp(strategy, "armasm_nt") == 0) {
+        test = mem_write_test_armasm_nt;
+    } else if (strcmp(strategy, "armasm_nt_x8") == 0) {
+        test = mem_write_test_armasm_nt_x8;
     } else if (strcmp(strategy, "armneon") == 0) {
         test = mem_write_test_armneon;
 #endif
