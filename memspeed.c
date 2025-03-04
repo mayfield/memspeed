@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <assert.h>
 #include <signal.h>
 #include <pthread.h>
 #include <sys/param.h>
@@ -15,6 +16,7 @@
 # include <arm_neon.h>
 #endif
 
+#define TB (1UL * 1024 * 1024 * 1024 * 1024)
 #define GB (1UL * 1024 * 1024 * 1024)
 #define MB (1UL * 1024 * 1024)
 
@@ -62,7 +64,10 @@ static char *human_size(size_t bytes) {
     static _Thread_local char buf[128];
     char *fmt;
     double v;
-    if (bytes >= GB * 2) {
+    if (bytes >= TB * 2) {
+        fmt = (bytes % TB) ? "%.2f TB" : "%.0f TB";
+        v = ((double) bytes) / TB;
+    } else if (bytes >= GB * 2) {
         fmt = (bytes % GB) ? "%.2f GB" : "%.0f GB";
         v = ((double) bytes) / GB;
     } else if (bytes >= MB * 2) {
@@ -108,14 +113,12 @@ static uint64_t str_to_pos_u64(char* raw) {
 static void *alloc(size_t size, int use_mmap) {
     void *ptr;
     if (use_mmap != 0) {
-        printf("Using MMAP (SHARED)\n");
         ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
         if (ptr == MAP_FAILED) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
             exit(1);
         }
     } else {
-        printf("Using MALLOC\n");
         ptr = aligned_alloc(g_page_size, size);
         if (ptr == NULL) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
@@ -869,28 +872,24 @@ int main(int argc, char *argv[]) {
         }
     }
     size_t buffer_size = buffer_size_mb * MB;
-    if (buffer_size % (g_page_size * g_thread_count)) {
+    if (!buffer_size || (buffer_size % (g_page_size * g_thread_count))) {
         size_t div = g_page_size * g_thread_count;
-        buffer_size = (buffer_size / div) * div;
-        fprintf(stderr, "NOTE: Adjusting BUFFER_SIZE: %s\n", human_size(buffer_size));
+        buffer_size = buffer_size > div ?
+            (buffer_size / div) * div :
+            div;
+        fprintf(stderr, "WARNING: Adjusting BUFFER_SIZE: %s\n", human_size(buffer_size));
     }
+    size_t shard_size = buffer_size / g_thread_count;
     size_t transfer_size = transfer_size_gb * GB;
-    if (buffer_size < g_page_size) {
-        fprintf(stderr, "Invalid BUFFER_SIZE (too small)\n");
-        exit(1);
-    }
-    if (transfer_size < buffer_size) {
-        fprintf(stderr, "Invalid TRANSFER_SIZE_GB (too small)\n");
-        exit(1);
-    }
-    if (transfer_size % (buffer_size * g_thread_count)) {
-        size_t div = buffer_size * g_thread_count;
-        transfer_size = (transfer_size / div) * div;
-        if (transfer_size == 0) {
-            transfer_size = buffer_size * g_thread_count;
-        }
+    if (transfer_size % buffer_size) {
+        transfer_size = transfer_size > buffer_size ?
+            (transfer_size / buffer_size) * buffer_size :
+            buffer_size;
         fprintf(stderr, "NOTE: Adjusting TRANSFER_SIZE: %s\n", human_size(transfer_size));
     }
+    assert(buffer_size && buffer_size % g_page_size == 0);
+    assert(shard_size && shard_size % g_page_size == 0);
+    assert(transfer_size && transfer_size % g_page_size == 0);
     mem_write_test test;
     if (strcmp(strategy, "c") == 0) {
         test = mem_write_test_c;
@@ -944,20 +943,20 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     printf("Strategy: %s\n", strategy);
-    printf("Page size: %ld\n", sysconf(_SC_PAGESIZE));
+    printf("Page size: %s\n", human_size(g_page_size));
     printf("Transfer size: %s\n", human_size(transfer_size));
-    printf("Allocating memory: %s\n", human_size(buffer_size));
     if (g_thread_count > 1) {
         printf("Threads: %ld\n", g_thread_count);
-        printf("Thread Shard: %s\n", human_size(buffer_size / g_thread_count));
+        printf("Thread shard: %s\n", human_size(buffer_size / g_thread_count));
     }
+    printf("Allocating memory [%s]: %s\n", use_mmap ? "mmap" : "malloc", human_size(buffer_size));
     void *mem = alloc(buffer_size, use_mmap);
     printf("Pre-faulting memory...\n");
     // NOTE: Memset can get optimized out, must write by hand...
     for (size_t i = 0; i < buffer_size; i++) {
-        ((char*) mem)[i] = 0;
+        ((char*) mem)[i] = 0b01010101;
+        (void) ((char*) mem)[i];
     }
-    sleep(1);
     signal(SIGINT, on_interrupted);
     printf("Running test...\n");
     if (g_thread_count > 1) {
@@ -966,7 +965,7 @@ int main(int argc, char *argv[]) {
         bench(mem, buffer_size, transfer_size, test);
     }
     double end_time = get_time();
-    printf("\nCOMPLETED\n\n");
+    printf("COMPLETED\n\n");
     dealloc(mem, buffer_size, use_mmap);
     print_results(end_time - g_start_time);
     return 0;
