@@ -1,3 +1,6 @@
+
+
+
 memspeed
 ========
 Simple C/ASM based memory bandwidth benchmark.
@@ -20,7 +23,7 @@ for (u64 i = 0; i < size / sizeof(u64); i++) {
  * Some platforms may achieve higher overall bandwidth with `--threads N`.
  * Memory subsystems are far more complicated than a single "mega-transfers" number
 
-https://github.com/user-attachments/assets/4be00edb-746f-4131-8f6a-555299536ee6
+https://github.com/user-attachments/assets/c29a2675-22b6-40b3-b6d2-5b10ac9847c9
 
 Compatibility
 --------
