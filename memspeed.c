@@ -886,6 +886,9 @@ int main(int argc, char *argv[]) {
     if (transfer_size % (buffer_size * g_thread_count)) {
         size_t div = buffer_size * g_thread_count;
         transfer_size = (transfer_size / div) * div;
+        if (transfer_size == 0) {
+            transfer_size = buffer_size * g_thread_count;
+        }
         fprintf(stderr, "NOTE: Adjusting TRANSFER_SIZE: %s\n", human_size(transfer_size));
     }
     mem_write_test test;

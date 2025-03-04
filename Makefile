@@ -1,4 +1,4 @@
-CC := cc
+CC := clang
 CFLAGS := -O3 -mtune=native -march=native -std=gnu11 -Wall -lpthread
 
 default: memspeed
