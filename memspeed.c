@@ -111,7 +111,7 @@ static void *alloc(size_t size, int use_mmap) {
     void *ptr;
     if (use_mmap != 0) {
         printf("Using MMAP (SHARED)\n");
-        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANON, -1, 0);
         if (ptr == MAP_FAILED) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
             exit(1);
