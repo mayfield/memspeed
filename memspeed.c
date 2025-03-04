@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -6,6 +8,7 @@
 #include <errno.h>
 #include <time.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/param.h>
 #include <sys/mman.h>
 #ifndef __APPLE__
@@ -14,23 +17,78 @@
 # include <arm_neon.h>
 #endif
 
-#define GB (1L * 1024 * 1024 * 1024)
-#define MB (1L * 1024 * 1024)
+#define GB (1UL * 1024 * 1024 * 1024)
+#define MB (1UL * 1024 * 1024)
 
-static size_t page_size = 0;
-struct timespec _ts;
-typedef void (*mem_write_test)(void *ptr, size_t size, uint64_t iter);
+typedef void (*mem_write_test)(void *ptr, size_t size, size_t iter);
 
-static double start_time = 0;
-static size_t transferred = 0;
+typedef struct thread_options {
+    int id;
+    mem_write_test test;
+    void *mem;
+    size_t size;
+    size_t iterations;
+    size_t *ready;
+    size_t *done;
+    pthread_cond_t *ready_cond;
+    pthread_mutex_t *ready_mut;
+    pthread_cond_t *start_cond;
+    pthread_mutex_t *start_mut;
+    pthread_cond_t *prog_cond;
+    pthread_mutex_t *prog_mut;
+} thread_options_t;
+
+typedef struct draw_state {
+    size_t ticks;
+    size_t last_sz;
+    double last_time;
+} draw_state_t;
+
+
+static size_t g_page_size = 0;
+static double g_start_time = 0;
+static size_t g_transferred = 0;
+static size_t g_thread_count = 1;
+
+
+#define ZERO_OR_EXIT(call) \
+    do { \
+        if ((call) != 0) { \
+            fprintf(stderr, "Non-zero Call error: %s\n", strerror(errno)); \
+            exit(1); \
+        } \
+    } while (0)
+
+
+static char *human_size(size_t bytes) {
+    static _Thread_local char buf[128];
+    char *fmt;
+    double v;
+    if (bytes >= GB * 2) {
+        fmt = (bytes % GB) ? "%.2f GB" : "%.0f GB";
+        v = ((double) bytes) / GB;
+    } else if (bytes >= MB * 2) {
+        fmt = (bytes % MB) ? "%.2f MB" : "%.0f MB";
+        v = ((double) bytes) / MB;
+    } else if (bytes >= 1024 * 2) {
+        fmt = (bytes % 1024) ? "%.2f KB" : "%.0f KB";
+        v = bytes / 1024.0;
+    } else {
+        fmt = "%.0f B";
+        v = bytes;
+    }
+    snprintf(buf, sizeof(buf), fmt, v);
+    return buf;
+}
 
 
 static double get_time() {
-    if (clock_gettime(CLOCK_MONOTONIC, &_ts) != 0) {
+    struct timespec tspec;
+    if (clock_gettime(CLOCK_MONOTONIC, &tspec) != 0) {
         fprintf(stderr, "Get time error");
-        return -1;
+        exit(1);
     }
-    return _ts.tv_sec + _ts.tv_nsec / 1e9;
+    return tspec.tv_sec + tspec.tv_nsec / 1e9;
 }
 
 
@@ -60,7 +118,7 @@ static void *alloc(size_t size, int use_mmap) {
         }
     } else {
         printf("Using MALLOC\n");
-        ptr = aligned_alloc(page_size, size);
+        ptr = aligned_alloc(g_page_size, size);
         if (ptr == NULL) {
             fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
             exit(1);
@@ -80,10 +138,10 @@ static void dealloc(void *ptr, size_t size, int use_mmap) {
 
 
 #ifndef __APPLE__
-static void mem_write_test_x86asm_nt(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_nt(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t); 
@@ -106,10 +164,10 @@ static void mem_write_test_x86asm_nt(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_x86asm(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t); 
@@ -131,10 +189,10 @@ static void mem_write_test_x86asm(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_x86asm_nt_x8(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_nt_x8(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t) / 8; 
@@ -164,10 +222,10 @@ static void mem_write_test_x86asm_nt_x8(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_x86asm_x8(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_x8(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t) / 8; 
@@ -196,10 +254,10 @@ static void mem_write_test_x86asm_x8(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_x86asm_nt_x32(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_nt_x32(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t) / 32; 
@@ -253,10 +311,10 @@ static void mem_write_test_x86asm_nt_x32(void *ptr, size_t size, uint64_t iter) 
 }
 
 
-static void mem_write_test_x86asm_x32(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_x86asm_x32(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     size_t len = size / sizeof(uint64_t) / 32; 
@@ -309,10 +367,10 @@ static void mem_write_test_x86asm_x32(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_avx2_nt(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_avx2_nt(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     const __m256i vec = _mm256_set1_epi64x(v);
@@ -324,10 +382,10 @@ static void mem_write_test_avx2_nt(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_avx2(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_avx2(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     const __m256i vec = _mm256_set1_epi64x(v);
@@ -339,10 +397,10 @@ static void mem_write_test_avx2(void *ptr, size_t size, uint64_t iter) {
 
 
 # ifdef __AVX512F__
-static void mem_write_test_avx512_nt(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_avx512_nt(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     const __m512i vec = _mm512_set1_epi64(v);
@@ -354,10 +412,10 @@ static void mem_write_test_avx512_nt(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_avx512(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     const __m512i vec = _mm512_set1_epi64(v);
@@ -370,10 +428,10 @@ static void mem_write_test_avx512(void *ptr, size_t size, uint64_t iter) {
 
 #else
 
-void mem_write_test_armneon(void *ptr, size_t size, uint64_t iter) {
+void mem_write_test_armneon(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     uint64x2_t vec = vdupq_n_u64(v);
@@ -385,10 +443,10 @@ void mem_write_test_armneon(void *ptr, size_t size, uint64_t iter) {
 #endif
 
 
-static void mem_write_test_c(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     uint64_t *mem = ptr;
@@ -398,10 +456,10 @@ static void mem_write_test_c(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_c_x8(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x8(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     uint64_t *mem = ptr;
@@ -418,10 +476,10 @@ static void mem_write_test_c_x8(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_c_x32(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x32(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     uint64_t *m = ptr;
@@ -434,10 +492,10 @@ static void mem_write_test_c_x32(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_c_x128(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_c_x128(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
-    for (int i = 0; i < sizeof(uint64_t); i++) {
+    for (size_t i = 0; i < sizeof(uint64_t); i++) {
         v = (v << 8) | b;
     }
     uint64_t *m = ptr;
@@ -462,84 +520,168 @@ static void mem_write_test_c_x128(void *ptr, size_t size, uint64_t iter) {
 }
 
 
-static void mem_write_test_memset(void *ptr, size_t size, uint64_t iter) {
+static void mem_write_test_memset(void *ptr, size_t size, size_t iter) {
     const char b = iter % 0xff;
     memset(ptr, b, size);
 }
 
 
-static void mem_write_test_memcpy(void *ptr, size_t size, uint64_t iter) {
-    char * restrict scratch = aligned_alloc(page_size, page_size);
+static void mem_write_test_memcpy(void *ptr, size_t size, size_t iter) {
+    char * restrict scratch = aligned_alloc(g_page_size, g_page_size);
     if (scratch == NULL) {
         fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
         exit(1);
     }
     const char b = iter % 0xff;
-    memset(scratch, b, page_size);
+    memset(scratch, b, g_page_size);
     char *mem = ptr;
-    for (size_t i = 0; i < size; i += page_size) {
-        memcpy(mem + i, scratch, page_size);
+    for (size_t i = 0; i < size; i += g_page_size) {
+        memcpy(mem + i, scratch, g_page_size);
     }
     free(scratch);
 }
 
 
-static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
-    const size_t iterations = transfer_size / buffer_size;
-    uint64_t iter;
-    int gb_count = 0;
-    size_t last_draw_sz = 0;
-    start_time = get_time();
-    double last_draw_time = start_time;
-    for (iter = 1, transferred = 0; iter <= iterations; iter++) {
-        test(mem, buffer_size, iter);
-        transferred += buffer_size;
-        if (0) {
-            for (; gb_count * GB < transferred; gb_count++) {
-                printf(".");
-                fflush(stdout);
-            }
-        } else {
-            int draw = 0;
-            for (; gb_count * GB < transferred; gb_count++) {
-                draw = 1;
-            }
-            if (draw) {
-                double t = get_time();
-                double elapsed = t - last_draw_time;
-                if (elapsed > 0.100) {
-                    printf("\r%80s\r", "");
-                    printf("\rCurrent Speed: %.3f GB/s",
-                        (transferred - last_draw_sz) / (t - last_draw_time) / GB);
-                    fflush(stdout);
-                    last_draw_sz = transferred;
-                    last_draw_time = t;
-                }
-            }
+static void maybe_draw_progress(draw_state_t *state) {
+    int draw = 0;
+    for (; state->ticks * GB < g_transferred; state->ticks++) {
+        draw = 1;
+    }
+    if (draw) {
+        double t = get_time();
+        double elapsed = t - state->last_time;
+        if (elapsed > 0.200) {
+            printf("\r%80s\r", "");
+            printf("\rCurrent Speed: %s/s",
+                human_size((g_transferred - state->last_sz) / (t - state->last_time)));
+            fflush(stdout);
+            state->last_sz = g_transferred;
+            state->last_time = t;
         }
+    }
+}
+
+
+static void* threaded_test_runner(void *_options) {
+    thread_options_t *options = _options;
+    ZERO_OR_EXIT(pthread_mutex_lock(options->ready_mut));
+    (*options->ready)++;
+    ZERO_OR_EXIT(pthread_cond_signal(options->ready_cond));
+    ZERO_OR_EXIT(pthread_mutex_unlock(options->ready_mut));
+
+    ZERO_OR_EXIT(pthread_cond_wait(options->start_cond, options->start_mut));
+    ZERO_OR_EXIT(pthread_mutex_unlock(options->start_mut));
+    for (size_t iter = 1; iter <= options->iterations; iter++) {
+        options->test(options->mem, options->size, iter);
+        ZERO_OR_EXIT(pthread_mutex_lock(options->prog_mut));
+        g_transferred += options->size;
+        if (iter == options->iterations) {
+            (*options->done)++;
+        }
+        ZERO_OR_EXIT(pthread_cond_broadcast(options->prog_cond));
+        ZERO_OR_EXIT(pthread_mutex_unlock(options->prog_mut));
+    }
+    return NULL;
+}
+
+
+static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
+    pthread_t *threads = calloc(g_thread_count, sizeof(pthread_t));
+    if (threads == NULL) {
+        fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+        exit(1);
+    }
+
+    pthread_cond_t ready_cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t ready_mut = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t start_mut = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t prog_cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t prog_mut = PTHREAD_MUTEX_INITIALIZER;
+    size_t ready = 0;
+    size_t done = 0;
+    ZERO_OR_EXIT(pthread_mutex_lock(&start_mut));
+
+    for (size_t i = 0; i < g_thread_count; i++) {
+        thread_options_t *options = malloc(sizeof(thread_options_t));
+        if (options == NULL) {
+            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+            exit(1);
+        }
+        size_t shard_size = buffer_size / g_thread_count;
+        options->id = i;
+        options->test = test;
+        options->mem = mem + (shard_size * i);
+        options->size = shard_size;
+        options->ready = &ready;
+        options->done = &done;
+        options->ready_cond = &ready_cond;
+        options->ready_mut = &ready_mut;
+        options->start_cond = &start_cond;
+        options->start_mut = &start_mut;
+        options->prog_cond = &prog_cond;
+        options->prog_mut = &prog_mut;
+        options->iterations = transfer_size / buffer_size;
+        ZERO_OR_EXIT(pthread_create(&threads[i], NULL, threaded_test_runner, options));
+    }
+
+    ZERO_OR_EXIT(pthread_mutex_lock(&ready_mut));
+    while (ready < g_thread_count) {
+        ZERO_OR_EXIT(pthread_cond_wait(&ready_cond, &ready_mut));
+    }
+    ZERO_OR_EXIT(pthread_mutex_unlock(&ready_mut));
+
+    ZERO_OR_EXIT(pthread_cond_broadcast(&start_cond));
+    g_start_time = get_time();
+    draw_state_t draw_state = {.last_time = g_start_time};
+
+    ZERO_OR_EXIT(pthread_mutex_lock(&prog_mut));
+    while (done < g_thread_count) {
+        ZERO_OR_EXIT(pthread_cond_wait(&prog_cond, &prog_mut));
+        maybe_draw_progress(&draw_state);
+    }
+    printf("\n");
+
+    for (size_t i = 0; i < g_thread_count; i++) {
+        pthread_join(threads[i], NULL);
+    }
+}
+
+
+static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
+    if (buffer_size < 1 || transfer_size < buffer_size) {
+        fprintf(stderr, "Invalid bench args\n");
+        exit(1);
+    }
+    g_start_time = get_time();
+    draw_state_t draw_state = {.last_time = g_start_time};
+    for (size_t iter = 1; iter <= transfer_size / buffer_size; iter++) {
+        test(mem, buffer_size, iter);
+        g_transferred += buffer_size;
+        maybe_draw_progress(&draw_state);
     }
     printf("\n");
 }
 
 
 static void print_results(double time) {
-    double transferred_gb = (double) transferred / GB;
-    printf("Transferred: %.1f GB\n", transferred_gb);
+    printf("Transferred: %s\n", human_size(g_transferred));
     printf("Time: %.3f s\n", time);
-    printf("Speed: %.3f GB/s\n", transferred_gb / time);
+    printf("Speed: %.3f GB/s\n", g_transferred / GB / time);
 }
 
 
 static void on_interrupted(int _) {
+    (void) _;
     double end_time = get_time();
     printf("\n\nINTERRUPTED\n\n");
-    print_results(end_time - start_time);
+    print_results(end_time - g_start_time);
     exit(1);
 }
 
 
 int main(int argc, char *argv[]) {
-    page_size = sysconf(_SC_PAGESIZE);
+    g_page_size = sysconf(_SC_PAGESIZE);
     size_t buffer_size_mb = 4 * 1024;
     size_t transfer_size_gb = 100;
     char *strategy = "c";
@@ -557,6 +699,16 @@ int main(int argc, char *argv[]) {
                 exit(1);
             }
             transfer_size_gb = str_to_pos_u64(argv[++i]);
+        } else if (strncmp(argv[i], "--threads", 9) == 0) {
+            if (argc < i + 2) {
+                fprintf(stderr, "Expected THREAD_COUNT argument\n");
+                exit(1);
+            }
+            g_thread_count = str_to_pos_u64(argv[++i]);
+            if (g_thread_count < 1 || g_thread_count > 1000) {
+                fprintf(stderr, "Invalid THREAD_COUNT: %ld\n", g_thread_count);
+                exit(1);
+            }
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -599,15 +751,25 @@ int main(int argc, char *argv[]) {
             buffer_size_mb = str_to_pos_u64(argv[i]);
         }
     }
-    const size_t buffer_size = buffer_size_mb * MB;
-    const size_t transfer_size = transfer_size_gb * GB;
-    if (buffer_size < page_size) {
+    size_t buffer_size = buffer_size_mb * MB;
+    if (buffer_size % (g_page_size * g_thread_count)) {
+        size_t div = g_page_size * g_thread_count;
+        buffer_size = (buffer_size / div) * div;
+        fprintf(stderr, "NOTE: Adjusting BUFFER_SIZE: %s\n", human_size(buffer_size));
+    }
+    size_t transfer_size = transfer_size_gb * GB;
+    if (buffer_size < g_page_size) {
         fprintf(stderr, "Invalid BUFFER_SIZE (too small)\n");
         exit(1);
     }
     if (transfer_size < buffer_size) {
         fprintf(stderr, "Invalid TRANSFER_SIZE_GB (too small)\n");
         exit(1);
+    }
+    if (transfer_size % (buffer_size * g_thread_count)) {
+        size_t div = buffer_size * g_thread_count;
+        transfer_size = (transfer_size / div) * div;
+        fprintf(stderr, "NOTE: Adjusting TRANSFER_SIZE: %s\n", human_size(transfer_size));
     }
     mem_write_test test;
     if (strcmp(strategy, "c") == 0) {
@@ -655,24 +817,29 @@ int main(int argc, char *argv[]) {
     }
     printf("Strategy: %s\n", strategy);
     printf("Page size: %ld\n", sysconf(_SC_PAGESIZE));
-    printf("Target transfer size: %ld GB\n", transfer_size_gb);
-    if (buffer_size_mb >= 1024) {
-        printf("Allocating memory: %.2f GB\n", buffer_size_mb / 1024.0);
-    } else {
-        printf("Allocating memory: %ld MB\n", buffer_size_mb);
+    printf("Transfer size: %s\n", human_size(transfer_size));
+    printf("Allocating memory: %s\n", human_size(buffer_size));
+    if (g_thread_count > 1) {
+        printf("Threads: %ld\n", g_thread_count);
+        printf("Thread Shard: %s\n", human_size(buffer_size / g_thread_count));
     }
     void *mem = alloc(buffer_size, use_mmap);
     printf("Pre-faulting memory...\n");
-    // NOTE: Memset gets optimized out, and timing is maleffected if we don't prefill.
+    // NOTE: Memset can get optimized out, must write by hand...
     for (size_t i = 0; i < buffer_size; i++) {
-        ((char*)mem)[i] = 0;
+        ((char*) mem)[i] = 0;
     }
+    sleep(1);
     signal(SIGINT, on_interrupted);
     printf("Running test...\n");
-    bench(mem, buffer_size, transfer_size, test);
+    if (g_thread_count > 1) {
+        bench_threaded(mem, buffer_size, transfer_size, test);
+    } else {
+        bench(mem, buffer_size, transfer_size, test);
+    }
     double end_time = get_time();
     printf("\nCOMPLETED\n\n");
     dealloc(mem, buffer_size, use_mmap);
-    print_results(end_time - start_time);
+    print_results(end_time - g_start_time);
     return 0;
 }

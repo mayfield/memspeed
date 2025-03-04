@@ -1,5 +1,5 @@
 CC := cc
-CFLAGS := -O3 -mtune=native -march=native -Wall -mno-avx512f
+CFLAGS := -O3 -mtune=native -march=native -std=c11 -Wall -Wextra -lpthread
 
 default: memspeed
 
