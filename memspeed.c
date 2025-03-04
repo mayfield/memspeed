@@ -664,7 +664,7 @@ static void maybe_draw_progress(draw_state_t *state) {
     if (draw) {
         double t = get_time();
         double elapsed = t - state->last_time;
-        if (elapsed > 0.200) {
+        if (elapsed > 0.500) {
             printf("\r%80s\r", "");
             printf("\rCurrent Speed: %s/s",
                 human_size((g_transferred - state->last_sz) / (t - state->last_time)));

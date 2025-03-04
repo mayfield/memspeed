@@ -17,8 +17,9 @@ for (u64 i = 0; i < size / sizeof(u64); i++) {
    that exceed CPU caches.
  * If you're interested in exploring your cache sizes, play with the buffer size and observe the
    jumps in speed.
- * Some platforms may achieve higher overall bandwidth with `--threads N`.
+ * Higher overall bandwidth may be seen with `--threads N`.
  * Memory subsystems are far more complicated than a single "mega-transfers" number
+    * https://www.akkadia.org/drepper/cpumemory.pdf
 
 https://github.com/user-attachments/assets/c29a2675-22b6-40b3-b6d2-5b10ac9847c9
 
@@ -113,4 +114,3 @@ Transferred: 2000 GB
 Time: 1.350 s
 Speed: 1481.769 GB/s
 ```
-
