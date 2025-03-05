@@ -694,6 +694,7 @@ static void* threaded_test_runner(void *_options) {
     ZERO_OR_EXIT(pthread_cond_signal(options->ready_cond));
     ZERO_OR_EXIT(pthread_mutex_unlock(options->ready_mut));
 
+    ZERO_OR_EXIT(pthread_mutex_lock(options->start_mut));
     ZERO_OR_EXIT(pthread_cond_wait(options->start_cond, options->start_mut));
     ZERO_OR_EXIT(pthread_mutex_unlock(options->start_mut));
     for (size_t iter = 1; iter <= options->iterations; iter++) {
@@ -703,7 +704,7 @@ static void* threaded_test_runner(void *_options) {
         if (iter == options->iterations) {
             (*options->done)++;
         }
-        ZERO_OR_EXIT(pthread_cond_broadcast(options->prog_cond));
+        ZERO_OR_EXIT(pthread_cond_signal(options->prog_cond));
         ZERO_OR_EXIT(pthread_mutex_unlock(options->prog_mut));
     }
     return NULL;
@@ -725,7 +726,6 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
     pthread_mutex_t prog_mut = PTHREAD_MUTEX_INITIALIZER;
     size_t ready = 0;
     size_t done = 0;
-    ZERO_OR_EXIT(pthread_mutex_lock(&start_mut));
 
     for (size_t i = 0; i < g_thread_count; i++) {
         thread_options_t *options = malloc(sizeof(thread_options_t));
@@ -756,7 +756,9 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
     }
     ZERO_OR_EXIT(pthread_mutex_unlock(&ready_mut));
 
+    ZERO_OR_EXIT(pthread_mutex_lock(&start_mut));
     ZERO_OR_EXIT(pthread_cond_broadcast(&start_cond));
+    ZERO_OR_EXIT(pthread_mutex_unlock(&start_mut));
     g_start_time = get_time();
     draw_state_t draw_state = {.last_time = g_start_time};
 
@@ -765,6 +767,7 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
         ZERO_OR_EXIT(pthread_cond_wait(&prog_cond, &prog_mut));
         maybe_draw_progress(&draw_state);
     }
+    ZERO_OR_EXIT(pthread_mutex_unlock(&prog_mut));
     printf("\n");
 
     for (size_t i = 0; i < g_thread_count; i++) {
