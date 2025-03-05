@@ -60,8 +60,14 @@ static size_t g_thread_count = 1;
     } while (0)
 
 
+// A static buffer allocated on the stack is used for this..
+// The returned pointer should not be shared, and only up to 10
+// uses in a single function can be used concurrently per thread.
 static char *human_size(size_t bytes) {
-    static _Thread_local char buf[128];
+    static _Thread_local size_t buf_idx = 0;
+    static _Thread_local char bufs[10][128];
+    const size_t i = buf_idx;
+    buf_idx = (buf_idx + 1) % 10;
     char *fmt;
     double v;
     if (bytes >= TB * 2) {
@@ -80,8 +86,8 @@ static char *human_size(size_t bytes) {
         fmt = "%.0f B";
         v = bytes;
     }
-    snprintf(buf, sizeof(buf), fmt, v);
-    return buf;
+    snprintf(bufs[i], sizeof(bufs[i]), fmt, v);
+    return bufs[i];
 }
 
 
@@ -667,10 +673,12 @@ static void maybe_draw_progress(draw_state_t *state) {
     if (draw) {
         double t = get_time();
         double elapsed = t - state->last_time;
-        if (elapsed > 0.500) {
+        if (elapsed > 0.200) {
             printf("\r%80s\r", "");
-            printf("\rCurrent Speed: %s/s",
-                human_size((g_transferred - state->last_sz) / (t - state->last_time)));
+            printf("\rCurrent: %10s/s  |  Avg: %10s/s  |  Transferred: %s",
+                human_size((g_transferred - state->last_sz) / (t - state->last_time)),
+                human_size(g_transferred / (t - g_start_time)),
+                human_size(g_transferred));
             fflush(stdout);
             state->last_sz = g_transferred;
             state->last_time = t;
@@ -784,7 +792,7 @@ static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write
 static void print_results(double time) {
     printf("Transferred: %s\n", human_size(g_transferred));
     printf("Time: %.3f s\n", time);
-    printf("Speed: %.3f GB/s\n", ((double) g_transferred) / GB / time);
+    printf("Speed: %s/s\n", human_size(g_transferred / time));
 }
 
 
@@ -965,7 +973,7 @@ int main(int argc, char *argv[]) {
         bench(mem, buffer_size, transfer_size, test);
     }
     double end_time = get_time();
-    printf("COMPLETED\n\n");
+    printf("\nCOMPLETED\n\n");
     dealloc(mem, buffer_size, use_mmap);
     print_results(end_time - g_start_time);
     return 0;
