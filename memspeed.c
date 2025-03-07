@@ -1,8 +1,11 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <time.h>
 #include <assert.h>
@@ -10,15 +13,21 @@
 #include <pthread.h>
 #include <sys/param.h>
 #include <sys/mman.h>
-#ifndef __APPLE__
+#ifdef __linux__
+# include <sys/prctl.h>
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
 # include <immintrin.h>
-#else
+#endif
+#if defined(__aarch64__) && defined(__ARM_NEON)
 # include <arm_neon.h>
 #endif
+
 
 #define TB (1UL * 1024 * 1024 * 1024 * 1024)
 #define GB (1UL * 1024 * 1024 * 1024)
 #define MB (1UL * 1024 * 1024)
+
 
 typedef void (*mem_write_test)(void *ptr, size_t size, size_t iter);
 
@@ -44,11 +53,17 @@ typedef struct draw_state {
     double last_time;
 } draw_state_t;
 
+typedef struct cpus_topology {
+    int *cpus;
+    int count;
+} cpus_topology_t;
+
 
 static size_t g_page_size = 0;
 static double g_start_time = 0;
 static size_t g_transferred = 0;
 static size_t g_thread_count = 1;
+static bool g_verbose = false;
 
 
 #define ZERO_OR_EXIT(call) \
@@ -144,7 +159,7 @@ static void dealloc(void *ptr, size_t size, int use_mmap) {
 }
 
 
-#ifndef __APPLE__
+#ifdef __x86_64__
 static void mem_write_test_x86asm_nt(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -372,8 +387,10 @@ static void mem_write_test_x86asm_x32(void *ptr, size_t size, size_t iter) {
         : "rcx", "rdx", "memory"
     );
 }
+#endif  // x86_64
 
 
+#ifdef __AVX2__
 static void mem_write_test_avx2_nt(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -431,10 +448,11 @@ static void mem_write_test_avx512(void *ptr, size_t size, size_t iter) {
          _mm512_store_si512(mem + i, vec);
     }
 }
-# endif
+# endif  // avx512
+#endif  // avx2
 
-#else /* APPLE */
 
+#ifdef __aarch64__
 static void mem_write_test_armasm(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -549,8 +567,10 @@ static void mem_write_test_armasm_nt_x8(void *ptr, size_t size, size_t iter) {
         : "x0", "x1", "memory"
     );
 }
+#endif  // aarch64
 
 
+#ifdef __ARM_NEON
 void mem_write_test_armneon(void *ptr, size_t size, size_t iter) {
     const uint64_t b = iter % 0xff;
     uint64_t v = 0;
@@ -563,7 +583,7 @@ void mem_write_test_armneon(void *ptr, size_t size, size_t iter) {
         vst1q_u64((uint64_t*) (mem + i), vec);
     }
 }
-#endif
+#endif  // arm_neon
 
 
 static void mem_write_test_c(void *ptr, size_t size, size_t iter) {
@@ -665,6 +685,36 @@ static void mem_write_test_memcpy(void *ptr, size_t size, size_t iter) {
 }
 
 
+#ifdef __linux__
+static cpus_topology_t * get_cpus_topology() {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    sched_getaffinity(0, sizeof(cpuset), &cpuset); // has ambiguous return value
+    int count = CPU_COUNT(&cpuset);
+    if (count < 1 || count > 0xffff) {
+        errno = ENOENT;
+        return NULL;
+    }
+    cpus_topology_t *topo = malloc(sizeof(cpus_topology_t));
+    if (topo == NULL) {
+        return NULL;
+    }
+    topo->cpus = calloc(count, sizeof(topo->cpus[0]));
+    if (topo->cpus == NULL) {
+        free(topo);
+        return NULL;
+    }
+    topo->count = count;
+    for (int cpu = 0, i = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (CPU_ISSET(cpu, &cpuset)) {
+            topo->cpus[i++] = cpu;
+        }
+    }
+    return topo;
+}
+#endif
+
+
 static void maybe_draw_progress(draw_state_t *state) {
     int draw = 0;
     for (; state->ticks * GB < g_transferred; state->ticks++) {
@@ -689,6 +739,11 @@ static void maybe_draw_progress(draw_state_t *state) {
 
 static void* threaded_test_runner(void *_options) {
     thread_options_t *options = _options;
+#ifdef __linux__
+    char name[128];
+    snprintf(name, sizeof(name), "memspeed-%03d", options->id);
+    ZERO_OR_EXIT(prctl(PR_SET_NAME, name));
+#endif
     ZERO_OR_EXIT(pthread_mutex_lock(options->ready_mut));
     (*options->ready)++;
     ZERO_OR_EXIT(pthread_cond_signal(options->ready_cond));
@@ -727,6 +782,37 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
     size_t ready = 0;
     size_t done = 0;
 
+#ifdef __linux__
+    cpus_topology_t *cpus_topo = get_cpus_topology();
+    if (cpus_topo == NULL) {
+        fprintf(stderr, "Failed to get CPU topology: %s", strerror(errno));
+        exit(1);
+    }
+    if (g_verbose) {
+        int last_cpu = cpus_topo->cpus[0];
+        printf("Available CPU cores: %d", last_cpu);
+        bool spanning = false;
+        for (int i = 1; i < cpus_topo->count; i++) {
+            int cpu = cpus_topo->cpus[i];
+            if (last_cpu == cpu - 1) {
+                last_cpu = cpu;
+                spanning = true;
+                continue;
+            }
+            if (spanning) {
+                printf(" -> %d", last_cpu);
+            }
+            printf(", %d", cpu);
+            spanning = false;
+            last_cpu = cpu;
+        }
+        if (spanning) {
+            printf(" -> %d", cpus_topo->cpus[cpus_topo->count - 1]);
+        }
+        printf("\n");
+    }
+#endif
+
     for (size_t i = 0; i < g_thread_count; i++) {
         thread_options_t *options = malloc(sizeof(thread_options_t));
         if (options == NULL) {
@@ -748,6 +834,16 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
         options->prog_mut = &prog_mut;
         options->iterations = transfer_size / buffer_size;
         ZERO_OR_EXIT(pthread_create(&threads[i], NULL, threaded_test_runner, options));
+#ifdef __linux__
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        int cpu = cpus_topo->cpus[options->id % cpus_topo->count];
+        if (g_verbose) {
+            printf("Thread %d mapped to CPU core: %d\n", options->id, cpu);
+        }
+        CPU_SET(cpu, &cpuset);
+        ZERO_OR_EXIT(pthread_setaffinity_np(threads[i], sizeof(cpuset), &cpuset));
+#endif
     }
 
     ZERO_OR_EXIT(pthread_mutex_lock(&ready_mut));
@@ -839,12 +935,15 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
+        } else if (strcmp(argv[i], "--verbose") == 0) {
+            g_verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
             char pad[128] = {0};
             memset(pad, 0, sizeof(pad));
             memset(pad, ' ', MIN(sizeof(pad) - 1, strlen(argv[0])));
             fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY]\n", argv[0]);
             fprintf(stderr, "       %s [--mmap]\n", pad);
+            fprintf(stderr, "       %s [--verbose]\n", pad);
             fprintf(stderr, "       %s [--trans[fer] TRANSFER_SIZE_GB]\n", pad);
             fprintf(stderr, "       %s [--threads THREAD_COUNT]\n", pad);
             fprintf(stderr, "       %s BUFFER_SIZE_MB\n", pad);
@@ -856,24 +955,29 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        c_x128          : A C loop with 128 x 64bit writes\n");
             fprintf(stderr, "        memset          : Byte by byte memset() in a loop\n");
             fprintf(stderr, "        memcpy          : Aligned page memcpy in a loop\n");
-#ifndef __APPLE__
+#ifdef __x86_64__
             fprintf(stderr, "        x86asm          : 64bit x86 ASM\n");
             fprintf(stderr, "        x86asm_nt       : 64bit x86 ASM (non-temporal)\n");
             fprintf(stderr, "        x86asm_x8       : 8 x 64bit x86 ASM\n");
             fprintf(stderr, "        x86asm_nt_x8    : 8 x 64bit x86 ASM (non-temporal)\n");
             fprintf(stderr, "        x86asm_x32      : 32 x 64bit x86 ASM\n");
             fprintf(stderr, "        x86asm_nt_x32   : 32 x 64bit x86 ASM (non-temporal)\n");
+#endif
+#ifdef __AVX2__
             fprintf(stderr, "        avx2            : 256bit AVX2 intrinsics\n");
             fprintf(stderr, "        avx2_nt         : 256bit AVX2 intrinsics (non-temporal)\n");
 # ifdef __AVX512F__
             fprintf(stderr, "        avx512          : 512bit AVX512 intrinsics\n");
             fprintf(stderr, "        avx512_nt       : 512bit AVX512 intrinsics (non-temporal)\n");
 # endif
-#else
+#endif
+#ifdef __aarch64__
             fprintf(stderr, "        armasm          : 128bit ARM ASM (STP)\n");
             fprintf(stderr, "        armasm_nt       : 128bit ARM ASM (non-temporal, STNP)\n");
             fprintf(stderr, "        armasm_x8       : 8 x 128bit ARM ASM (STP)\n");
+# ifdef __ARM_NEON
             fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD intrinsics\n");
+# endif
 #endif
             fprintf(stderr, "\n");
             fprintf(stderr, "    TRANSFER_SIZE_GB: Total amount to transfer through memory in GB\n");
@@ -914,7 +1018,7 @@ int main(int argc, char *argv[]) {
         test = mem_write_test_memset;
     } else if (strcmp(strategy, "memcpy") == 0) {
         test = mem_write_test_memcpy;
-#ifndef __APPLE__
+#ifdef __x86_64__
     } else if (strcmp(strategy, "x86asm") == 0) {
         test = mem_write_test_x86asm;
     } else if (strcmp(strategy, "x86asm_nt") == 0) {
@@ -927,6 +1031,8 @@ int main(int argc, char *argv[]) {
         test = mem_write_test_x86asm_x32;
     } else if (strcmp(strategy, "x86asm_nt_x32") == 0) {
         test = mem_write_test_x86asm_nt_x32;
+#endif
+#ifdef __AVX2__
     } else if (strcmp(strategy, "avx2") == 0) {
         test = mem_write_test_avx2;
     } else if (strcmp(strategy, "avx2_nt") == 0) {
@@ -937,7 +1043,8 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(strategy, "avx512_nt") == 0) {
         test = mem_write_test_avx512_nt;
 # endif
-#else
+#endif
+#ifdef __aarch64__
     } else if (strcmp(strategy, "armasm") == 0) {
         test = mem_write_test_armasm;
     } else if (strcmp(strategy, "armasm_x8") == 0) {
@@ -946,8 +1053,10 @@ int main(int argc, char *argv[]) {
         test = mem_write_test_armasm_nt;
     } else if (strcmp(strategy, "armasm_nt_x8") == 0) {
         test = mem_write_test_armasm_nt_x8;
+# ifdef __ARM_NEON
     } else if (strcmp(strategy, "armneon") == 0) {
         test = mem_write_test_armneon;
+# endif
 #endif
     } else {
         fprintf(stderr, "Invalid test strategy\n");
