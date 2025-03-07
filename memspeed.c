@@ -975,6 +975,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "        armasm          : 128bit ARM ASM (STP)\n");
             fprintf(stderr, "        armasm_nt       : 128bit ARM ASM (non-temporal, STNP)\n");
             fprintf(stderr, "        armasm_x8       : 8 x 128bit ARM ASM (STP)\n");
+            fprintf(stderr, "        armasm_nt_x8    : 8 x 128bit ARM ASM (non-temporal, SSTP)\n");
 # ifdef __ARM_NEON
             fprintf(stderr, "        armneon         : 128bit ARM NEON SIMD intrinsics\n");
 # endif
