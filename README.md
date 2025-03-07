@@ -25,8 +25,8 @@ https://github.com/user-attachments/assets/c29a2675-22b6-40b3-b6d2-5b10ac9847c9
 
 Compatibility
 --------
-* x86 (64bit) Linux
-* ARM macOS
+* Linux, macOS
+* ASM for Aarch64 and x86_64
 
 
 Building
@@ -39,13 +39,14 @@ cc -O3 -mtune=native -march=native -std=c11 -Wall -Wextra -lpthread memspeed.c -
 
 Usage
 --------
-NOTE: Options will vary between Linux and macOS.
+NOTE: Options will vary depending on your platform and instruction set.
 
 Example Linux usage...
 ```
 :; ./memspeed --help
 Usage: ./memspeed [--strat[egy] STRATEGY]
                   [--mmap]
+                  [--verbose]
                   [--trans[fer] TRANSFER_SIZE_GB]
                   [--threads THREAD_COUNT]
                   BUFFER_SIZE_MB
@@ -76,41 +77,42 @@ Running
 --------
 **Basic**
 ```
-:; ./memspeed 
+:; ./memspeed
 Strategy: c
-Page size: 4096
+Page size: 4 KB
 Transfer size: 100 GB
-Allocating memory: 4 GB
-Using MALLOC
+Allocating memory [malloc]: 4 GB
 Pre-faulting memory...
 Running test...
-Current Speed: 25.23 GB/s                                                       
+Current:   28.51 GB/s  |  Avg:   28.53 GB/s  |  Transferred: 96 GB              
 
 COMPLETED
 
 Transferred: 100 GB
-Time: 3.959 s
-Speed: 25.259 GB/s
+Time: 3.505 s
+Speed: 28.53 GB/s
 ```
 
 **Advanced**
-Explore maximum cache performance...
+Combine taskset to isolate threads to specific cores or CCDs...
 ```
-:; ./memspeed --strat avx512 --threads 32 --transfer 2000 32
-Strategy: avx512
-Page size: 4096
+:; taskset -c 0,8 ./memspeed --strat avx512_nt --threads 2 --transfer 2000 --verbose
+Strategy: avx512_nt
+Page size: 4 KB
 Transfer size: 2000 GB
-Allocating memory: 32 MB
-Threads: 32
-Thread Shard: 1024 KB
-Using MALLOC
+Threads: 2
+Thread shard: 2 GB
+Allocating memory [malloc]: 4 GB
 Pre-faulting memory...
 Running test...
-Current Speed: 1509.85 GB/s                                                     
+Available CPU cores: 0, 8
+Thread 0 mapped to CPU core: 0
+Thread 1 mapped to CPU core: 8
+Current:   59.12 GB/s  |  Avg:   59.12 GB/s  |  Transferred: 1992 GB            
 
 COMPLETED
 
 Transferred: 2000 GB
-Time: 1.350 s
-Speed: 1481.769 GB/s
+Time: 33.828 s
+Speed: 59.12 GB/s
 ```
