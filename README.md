@@ -12,7 +12,7 @@ for (u64 i = 0; i < size / sizeof(u64); i++) {
 
  * Care is taken to prevent compilers (gcc, clang) from optimizing out the loop.
  * Data written to memory is altered between iterations but is not verified, i.e. write-only.
- * Some of the test strategies use "njon-temporal" instructions, sometimes called streaming
+ * Some of the test strategies use non-temporal instructions, sometimes called streaming
    or out of order writes.  This can be faster on lower end CPUs and/or with higher buffer sizes
    that exceed CPU caches.
  * If you're interested in exploring your cache sizes, play with the buffer size and observe the
