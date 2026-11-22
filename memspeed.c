@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <signal.h>
 #include <pthread.h>
+#include <fcntl.h>
 #include <sys/param.h>
 #include <sys/mman.h>
 #ifdef __linux__
@@ -35,6 +36,7 @@ typedef struct thread_options {
     int id;
     mem_write_test test;
     void *mem;
+    size_t offset;
     size_t size;
     size_t iterations;
     size_t *ready;
@@ -60,10 +62,11 @@ typedef struct cpus_topology {
 
 
 static size_t g_page_size = 0;
-static double g_start_time = 0;
+static double g_start_time = -1;
 static size_t g_transferred = 0;
 static size_t g_thread_count = 1;
 static bool g_verbose = false;
+static int fd = -1;
 
 
 #define ZERO_OR_EXIT(call) \
@@ -128,34 +131,6 @@ static uint64_t str_to_pos_u64(char* raw) {
         exit(1);
     }
     return num;
-}
-
-
-static void *alloc(size_t size, int use_mmap) {
-    void *ptr;
-    if (use_mmap != 0) {
-        ptr = mmap(NULL, size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
-        if (ptr == MAP_FAILED) {
-            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
-            exit(1);
-        }
-    } else {
-        ptr = aligned_alloc(g_page_size, size);
-        if (ptr == NULL) {
-            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
-            exit(1);
-        }
-    }
-    return ptr;
-}
-
-
-static void dealloc(void *ptr, size_t size, int use_mmap) {
-    if (use_mmap != 0) {
-        munmap((void*) ptr, size);
-    } else {
-        free((void*) ptr);
-    }
 }
 
 
@@ -642,23 +617,23 @@ static void mem_write_test_c_x128(void *ptr, size_t size, size_t iter) {
         v = (v << 8) | b;
     }
     uint64_t *m = ptr;
-    for (size_t i = 0; i < size / sizeof(uint64_t);) {
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
-        m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v; m[i++] = v;
+    for (size_t i = 0; i < size / sizeof(uint64_t); i += 128) {
+        m[i]     = v; m[i+1]   = v; m[i+2]   = v; m[i+3]   = v; m[i+4]   = v; m[i+5]   = v; m[i+6]   = v; m[i+7]  =  v;
+        m[i+8]   = v; m[i+9]   = v; m[i+10]  = v; m[i+11]  = v; m[i+12]  = v; m[i+13]  = v; m[i+14]  = v; m[i+15] =  v;
+        m[i+16]  = v; m[i+17]  = v; m[i+18]  = v; m[i+19]  = v; m[i+20]  = v; m[i+21]  = v; m[i+22]  = v; m[i+23] =  v;
+        m[i+24]  = v; m[i+25]  = v; m[i+26]  = v; m[i+27]  = v; m[i+28]  = v; m[i+29]  = v; m[i+30]  = v; m[i+31] =  v;
+        m[i+32]  = v; m[i+33]  = v; m[i+34]  = v; m[i+35]  = v; m[i+36]  = v; m[i+37]  = v; m[i+38]  = v; m[i+39] =  v;
+        m[i+40]  = v; m[i+41]  = v; m[i+42]  = v; m[i+43]  = v; m[i+44]  = v; m[i+45]  = v; m[i+46]  = v; m[i+47] =  v;
+        m[i+48]  = v; m[i+49]  = v; m[i+50]  = v; m[i+51]  = v; m[i+52]  = v; m[i+53]  = v; m[i+54]  = v; m[i+55] =  v;
+        m[i+56]  = v; m[i+57]  = v; m[i+58]  = v; m[i+59]  = v; m[i+60]  = v; m[i+61]  = v; m[i+62]  = v; m[i+63] =  v;
+        m[i+64]  = v; m[i+65]  = v; m[i+66]  = v; m[i+67]  = v; m[i+68]  = v; m[i+69]  = v; m[i+70]  = v; m[i+71] =  v;
+        m[i+72]  = v; m[i+73]  = v; m[i+74]  = v; m[i+75]  = v; m[i+76]  = v; m[i+77]  = v; m[i+78]  = v; m[i+79] =  v;
+        m[i+80]  = v; m[i+81]  = v; m[i+82]  = v; m[i+83]  = v; m[i+84]  = v; m[i+85]  = v; m[i+86]  = v; m[i+87] =  v;
+        m[i+88]  = v; m[i+89]  = v; m[i+90]  = v; m[i+91]  = v; m[i+92]  = v; m[i+93]  = v; m[i+94]  = v; m[i+95] =  v;
+        m[i+96]  = v; m[i+97]  = v; m[i+98]  = v; m[i+99]  = v; m[i+100] = v; m[i+101] = v; m[i+102] = v; m[i+103] = v;
+        m[i+104] = v; m[i+105] = v; m[i+106] = v; m[i+107] = v; m[i+108] = v; m[i+109] = v; m[i+110] = v; m[i+111] = v;
+        m[i+112] = v; m[i+113] = v; m[i+114] = v; m[i+115] = v; m[i+116] = v; m[i+117] = v; m[i+118] = v; m[i+119] = v;
+        m[i+120] = v; m[i+121] = v; m[i+122] = v; m[i+123] = v; m[i+124] = v; m[i+125] = v; m[i+126] = v; m[i+127] = v;
     }
 }
 
@@ -715,15 +690,15 @@ static cpus_topology_t * get_cpus_topology() {
 #endif
 
 
-static void maybe_draw_progress(draw_state_t *state) {
-    int draw = 0;
+static void maybe_draw_progress(draw_state_t *state, bool force) {
+    bool sizable = false;
     for (; state->ticks * GB < g_transferred; state->ticks++) {
-        draw = 1;
+        sizable = true;
     }
-    if (draw) {
+    if (sizable || force) {
         double t = get_time();
         double elapsed = t - state->last_time;
-        if (elapsed > 0.200) {
+        if (elapsed > 0.200 || force) {
             printf("\r%80s\r", "");
             printf("\rCurrent: %10s/s  |  Avg: %10s/s  |  Transferred: %s",
                 human_size((g_transferred - state->last_sz) / (t - state->last_time)),
@@ -752,8 +727,27 @@ static void* threaded_test_runner(void *_options) {
     ZERO_OR_EXIT(pthread_mutex_lock(options->start_mut));
     ZERO_OR_EXIT(pthread_cond_wait(options->start_cond, options->start_mut));
     ZERO_OR_EXIT(pthread_mutex_unlock(options->start_mut));
+    void *mem = (fd == -1) ? options->mem + options->offset : NULL;
     for (size_t iter = 1; iter <= options->iterations; iter++) {
-        options->test(options->mem, options->size, iter);
+        if (fd != -1) {
+            // Remapping required with btrfs to workaround 50% perf issue
+            mem = mmap(NULL, options->size, PROT_WRITE, MAP_SHARED, fd, options->offset);
+            if (options->mem == MAP_FAILED) {
+                fprintf(stderr, "Mem map failed %s\n", strerror(errno));
+                exit(1);
+            }
+        }
+        options->test(mem, options->size, iter);
+        if (fd != -1) {
+            if (msync(mem, options->size, MS_SYNC) == -1) {
+                fprintf(stderr, "Mem sync to fd failed %s\n", strerror(errno));
+                exit(1);
+            }
+            if (munmap(mem, options->size) == -1) {
+                fprintf(stderr, "Mem unmap failed %s\n", strerror(errno));
+                exit(1);
+            }
+        }
         ZERO_OR_EXIT(pthread_mutex_lock(options->prog_mut));
         g_transferred += options->size;
         if (iter == options->iterations) {
@@ -766,7 +760,7 @@ static void* threaded_test_runner(void *_options) {
 }
 
 
-static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
+static void bench_threaded(void *mem, size_t buffer_size, size_t total_size, mem_write_test test) {
     pthread_t *threads = calloc(g_thread_count, sizeof(pthread_t));
     if (threads == NULL) {
         fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
@@ -822,7 +816,9 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
         size_t shard_size = buffer_size / g_thread_count;
         options->id = i;
         options->test = test;
-        options->mem = mem + (shard_size * i);
+        options->mem = mem;
+        options->offset = shard_size * i;
+
         options->size = shard_size;
         options->ready = &ready;
         options->done = &done;
@@ -832,7 +828,7 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
         options->start_mut = &start_mut;
         options->prog_cond = &prog_cond;
         options->prog_mut = &prog_mut;
-        options->iterations = transfer_size / buffer_size;
+        options->iterations = total_size / buffer_size;
         ZERO_OR_EXIT(pthread_create(&threads[i], NULL, threaded_test_runner, options));
 #ifdef __linux__
         cpu_set_t cpuset;
@@ -861,8 +857,9 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
     ZERO_OR_EXIT(pthread_mutex_lock(&prog_mut));
     while (done < g_thread_count) {
         ZERO_OR_EXIT(pthread_cond_wait(&prog_cond, &prog_mut));
-        maybe_draw_progress(&draw_state);
+        maybe_draw_progress(&draw_state, /*force*/ false);
     }
+    maybe_draw_progress(&draw_state, /*force*/ true);
     ZERO_OR_EXIT(pthread_mutex_unlock(&prog_mut));
     printf("\n");
 
@@ -872,17 +869,35 @@ static void bench_threaded(void *mem, size_t buffer_size, size_t transfer_size, 
 }
 
 
-static void bench(void *mem, size_t buffer_size, size_t transfer_size, mem_write_test test) {
-    if (buffer_size < 1 || transfer_size < buffer_size) {
+static void bench(void *mem, size_t buffer_size, size_t total_size, mem_write_test test) {
+    if (buffer_size < 1 || total_size < buffer_size) {
         fprintf(stderr, "Invalid bench args\n");
         exit(1);
     }
     g_start_time = get_time();
     draw_state_t draw_state = {.last_time = g_start_time};
-    for (size_t iter = 1; iter <= transfer_size / buffer_size; iter++) {
+    for (size_t iter = 1; iter <= total_size / buffer_size; iter++) {
+        if (fd != -1) {
+            // Remapping required with btrfs to workaround 50% perf issue
+            mem = mmap(NULL, buffer_size, PROT_WRITE, MAP_SHARED, fd, 0);
+            if (mem == MAP_FAILED) {
+                fprintf(stderr, "Mem map failed %s\n", strerror(errno));
+                exit(1);
+            }
+        }
         test(mem, buffer_size, iter);
+        if (fd != -1) {
+            if (msync(mem, buffer_size, MS_SYNC) == -1) {
+                fprintf(stderr, "Mem sync to fd failed %s\n", strerror(errno));
+                exit(1);
+            }
+            if (munmap(mem, buffer_size) == -1) {
+                fprintf(stderr, "Mem unmap failed %s\n", strerror(errno));
+                exit(1);
+            }
+        }
         g_transferred += buffer_size;
-        maybe_draw_progress(&draw_state);
+        maybe_draw_progress(&draw_state, /*force*/ false);
     }
     printf("\n");
 }
@@ -899,7 +914,9 @@ static void on_interrupted(int _) {
     (void) _;
     double end_time = get_time();
     printf("\n\nINTERRUPTED\n\n");
-    print_results(end_time - g_start_time);
+    if (g_start_time != -1) {
+        print_results(end_time - g_start_time);
+    }
     exit(1);
 }
 
@@ -907,9 +924,10 @@ static void on_interrupted(int _) {
 int main(int argc, char *argv[]) {
     g_page_size = sysconf(_SC_PAGESIZE);
     size_t buffer_size_mb = 4 * 1024;
-    size_t transfer_size_gb = 100;
+    size_t total_size_mb = 1024 * 1024;
     char *strategy = "c";
     int use_mmap = 0;
+    int use_mmap_disk = 0;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--strat", 7) == 0) {
             if (argc < i + 2) {
@@ -917,12 +935,12 @@ int main(int argc, char *argv[]) {
                 exit(1);
             }
             strategy = argv[++i];
-        } else if (strncmp(argv[i], "--trans", 7) == 0) {
+        } else if (strncmp(argv[i], "--total", 7) == 0) {
             if (argc < i + 2) {
-                fprintf(stderr, "Expected TRANSFER_SIZE_GB argument\n");
+                fprintf(stderr, "Expected TOTAL_SIZE_GB argument\n");
                 exit(1);
             }
-            transfer_size_gb = str_to_pos_u64(argv[++i]);
+            total_size_mb = str_to_pos_u64(argv[++i]);
         } else if (strncmp(argv[i], "--threads", 9) == 0) {
             if (argc < i + 2) {
                 fprintf(stderr, "Expected THREAD_COUNT argument\n");
@@ -935,6 +953,8 @@ int main(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--mmap") == 0) {
             use_mmap = 1;
+        } else if (strcmp(argv[i], "--mmap-disk") == 0) {
+            use_mmap_disk = 1;
         } else if (strcmp(argv[i], "--verbose") == 0) {
             g_verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -943,8 +963,9 @@ int main(int argc, char *argv[]) {
             memset(pad, ' ', MIN(sizeof(pad) - 1, strlen(argv[0])));
             fprintf(stderr, "Usage: %s [--strat[egy] STRATEGY]\n", argv[0]);
             fprintf(stderr, "       %s [--mmap]\n", pad);
+            fprintf(stderr, "       %s [--mmap-disk]\n", pad);
             fprintf(stderr, "       %s [--verbose]\n", pad);
-            fprintf(stderr, "       %s [--trans[fer] TRANSFER_SIZE_GB]\n", pad);
+            fprintf(stderr, "       %s [--total] TOTAL_SIZE_MB]\n", pad);
             fprintf(stderr, "       %s [--threads THREAD_COUNT]\n", pad);
             fprintf(stderr, "       %s BUFFER_SIZE_MB\n", pad);
             fprintf(stderr, "\n");
@@ -981,7 +1002,7 @@ int main(int argc, char *argv[]) {
 # endif
 #endif
             fprintf(stderr, "\n");
-            fprintf(stderr, "    TRANSFER_SIZE_GB: Total amount to transfer through memory in GB\n");
+            fprintf(stderr, "    TOTAL_SIZE_MB: Total amount to transfer through memory in MB\n");
             exit(0);
         } else {
             buffer_size_mb = str_to_pos_u64(argv[i]);
@@ -993,19 +1014,19 @@ int main(int argc, char *argv[]) {
         buffer_size = buffer_size > div ?
             (buffer_size / div) * div :
             div;
-        fprintf(stderr, "WARNING: Adjusting BUFFER_SIZE: %s\n", human_size(buffer_size));
+        fprintf(stderr, "WARNING: Adjusting BUFFER_SIZE_MB: %s\n", human_size(buffer_size));
     }
     size_t shard_size = buffer_size / g_thread_count;
-    size_t transfer_size = transfer_size_gb * GB;
-    if (transfer_size % buffer_size) {
-        transfer_size = transfer_size > buffer_size ?
-            (transfer_size / buffer_size) * buffer_size :
+    size_t total_size = total_size_mb * MB;
+    if (total_size % buffer_size) {
+        total_size = total_size > buffer_size ?
+            (total_size / buffer_size) * buffer_size :
             buffer_size;
-        fprintf(stderr, "NOTE: Adjusting TRANSFER_SIZE: %s\n", human_size(transfer_size));
+        fprintf(stderr, "NOTE: Adjusting TOTAL_SIZE_MB: %s\n", human_size(total_size));
     }
     assert(buffer_size && buffer_size % g_page_size == 0);
     assert(shard_size && shard_size % g_page_size == 0);
-    assert(transfer_size && transfer_size % g_page_size == 0);
+    assert(total_size && total_size % g_page_size == 0);
     mem_write_test test;
     if (strcmp(strategy, "c") == 0) {
         test = mem_write_test_c;
@@ -1065,29 +1086,93 @@ int main(int argc, char *argv[]) {
     }
     printf("Strategy: %s\n", strategy);
     printf("Page size: %s\n", human_size(g_page_size));
-    printf("Transfer size: %s\n", human_size(transfer_size));
+    printf("Transfer size: %s\n", human_size(total_size));
     if (g_thread_count > 1) {
         printf("Threads: %ld\n", g_thread_count);
         printf("Thread shard: %s\n", human_size(buffer_size / g_thread_count));
     }
-    printf("Allocating memory [%s]: %s\n", use_mmap ? "mmap" : "malloc", human_size(buffer_size));
-    void *mem = alloc(buffer_size, use_mmap);
-    printf("Pre-faulting memory...\n");
-    // NOTE: Memset can get optimized out, must write by hand...
-    for (size_t i = 0; i < buffer_size; i++) {
-        ((char*) mem)[i] = 0b01010101;
-        (void) ((char*) mem)[i];
-    }
-    signal(SIGINT, on_interrupted);
-    printf("Running test...\n");
-    if (g_thread_count > 1) {
-        bench_threaded(mem, buffer_size, transfer_size, test);
+    printf("Allocating buffer [%s]: %s\n", use_mmap_disk ? "mmap_disk" : use_mmap ? "mmap" : "malloc",
+           human_size(buffer_size));
+    void *mem;
+    if (use_mmap_disk != 0) {
+        fd = open("./memspeed.test", O_CREAT|O_DIRECT|O_RDWR, 0640);
+        if (fd == -1) {
+            fprintf(stderr, "Failed to open/create memspeed.test file: %s\n", strerror(errno));
+        }
+        if (fallocate(fd, /*flags*/ 0, /*offt*/ 0, buffer_size) == -1) {
+            fprintf(stderr, "Failed to allocate memspeed.test file: %s\n", strerror(errno));
+        }
+        posix_fadvise64(fd, 0, buffer_size, POSIX_FADV_SEQUENTIAL);
+        mem = mmap(NULL, buffer_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mem == MAP_FAILED) {
+            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+            exit(1);
+        }
+    } else if (use_mmap != 0) {
+        mem = mmap(NULL, buffer_size, PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+        if (mem == MAP_FAILED) {
+            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+            exit(1);
+        }
     } else {
-        bench(mem, buffer_size, transfer_size, test);
+        mem = aligned_alloc(g_page_size, buffer_size);
+        if (mem == NULL) {
+            fprintf(stderr, "Mem alloc failed %s\n", strerror(errno));
+            exit(1);
+        }
+    }
+    // NOTE: Memset can get optimized out, must write by hand...
+    srand((unsigned int) time(NULL));
+    printf("Prefaulting buffer:          ");
+    fflush(stdout);
+    for (size_t i = 0; i < buffer_size / sizeof(int); i++) {
+        ((int*) mem)[i] = rand();
+        if (i % (100 * MB) == 0) {
+            printf("\rPrefaulting buffer: %8x ", ((int*) mem)[i]);
+            fflush(stdout);
+        }
+    }
+    for (size_t i = 0; i < buffer_size / sizeof(int); i++) {
+        (void) ((int*) mem)[i];
+    }
+    if (use_mmap_disk != 0) {
+        if (msync(mem, buffer_size, MS_SYNC) == -1) {
+            fprintf(stderr, "Mem sync to fd failed %s\n", strerror(errno));
+            exit(1);
+        }
+        if (munmap(mem, buffer_size) == -1) {
+            fprintf(stderr, "Mem unmap failed %s\n", strerror(errno));
+            exit(1);
+        }
+        mem = NULL;
+    }
+    printf("\n");
+
+    usleep(100000);
+
+    printf("Running test...\n");
+    signal(SIGINT, on_interrupted);
+    if (g_thread_count > 1) {
+        bench_threaded(mem, buffer_size, total_size, test);
+    } else {
+        bench(mem, buffer_size, total_size, test);
     }
     double end_time = get_time();
+
+    if (use_mmap != 0) {
+        if (munmap((void*) mem, buffer_size) == -1) {
+            fprintf(stderr, "Mem unmap failed %s\n", strerror(errno));
+            exit(1);
+        }
+    } else if (use_mmap_disk != 0) {
+        if (close(fd) == -1) {
+            fprintf(stderr, "File close %s\n", strerror(errno));
+            exit(1);
+        }
+    } else {
+        free((void*) mem);
+    }
     printf("\nCOMPLETED\n\n");
-    dealloc(mem, buffer_size, use_mmap);
     print_results(end_time - g_start_time);
     return 0;
 }
